@@ -1,17 +1,19 @@
 {
   "manifest_version": 3,
   "name": "OfferTrack - 秋招投递助手",
-  "version": "1.6.0",
-  "description": "自动识别招聘网站投递记录，融合页面结构化数据、底层运行时状态与可见 DOM，预览、去重并同步到飞书多维表格。",
+  "version": "2.0.0",
+  "description": "自动识别并同步招聘投递记录；支持每 6 小时从飞书读取进行中投递、复用浏览器登录会话自动检查招聘进度并更新状态。",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "alarms",
+    "notifications"
   ],
   "host_permissions": [
     "https://*/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "service-worker.js"
   },
   "action": {
     "default_title": "OfferTrack",
@@ -38,6 +40,7 @@
       "js": [
         "content.js",
         "semantic.js",
+        "followup-probe.js",
         "content-ui.js"
       ],
       "css": [
@@ -46,5 +49,5 @@
       "run_at": "document_idle"
     }
   ],
-  "version_name": "1.6.0"
+  "version_name": "2.0.0"
 }

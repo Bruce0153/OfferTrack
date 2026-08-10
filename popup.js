@@ -8,7 +8,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('scan').onclick = scan;
   $('sync').onclick = sync;
   $('options').onclick = () => chrome.runtime.openOptionsPage();
+  $('followUpNow').onclick = runFollowUpNow;
   await loadState();
+  await loadFollowUpState();
   await scan();
 });
 
@@ -114,4 +116,43 @@ function setMessage(text, error=false) {
 
 function escapeHtml(v) {
   return String(v || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+}
+
+async function loadFollowUpState() {
+  try {
+    const stored = await chrome.storage.local.get(['settings','lastFollowUp','followUpLease']);
+    const settings = stored.settings || {};
+    const alarm = await chrome.alarms.get('offertrack-follow-up').catch(() => null);
+    const lease = stored.followUpLease || {};
+    const running = lease.status === 'running' && Date.now() - Number(lease.startedAt || 0) < 20 * 60 * 1000;
+    $('followUpState').textContent = running ? '运行中…' : (settings.followUpEnabled ? `已开启 · ${Number(settings.followUpIntervalHours || 6)}h` : '未开启');
+    const parts = [];
+    if (stored.lastFollowUp?.at) {
+      parts.push(`上次 ${new Date(stored.lastFollowUp.at).toLocaleString('zh-CN', { hour12:false })}`);
+      parts.push(`变化 ${stored.lastFollowUp.changed ?? 0}`);
+    }
+    if (alarm?.scheduledTime) parts.push(`下次 ${new Date(alarm.scheduledTime).toLocaleString('zh-CN', { hour12:false })}`);
+    $('followUpMeta').textContent = parts.join(' · ') || '可在设置中开启每 6 小时自动跟进';
+  } catch (e) {
+    $('followUpState').textContent = '不可用';
+    $('followUpMeta').textContent = e?.message || String(e);
+  }
+}
+
+async function runFollowUpNow() {
+  const btn = $('followUpNow');
+  btn.disabled = true;
+  btn.textContent = '正在启动…';
+  try {
+    const request = { id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: Date.now() };
+    await chrome.storage.local.set({ followUpRunRequest: request });
+    setMessage('自动跟进任务已启动，可关闭插件窗口；任务会在后台继续运行。');
+    await new Promise(resolve => setTimeout(resolve, 700));
+    await loadFollowUpState();
+  } catch (e) {
+    setMessage(e?.message || String(e), true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '立即跟进全部';
+  }
 }

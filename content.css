@@ -12,6 +12,14 @@
   font-family: inherit;
 }
 
+/* 兼容升级：旧 content.js 首次插入结构后，在 UI 控制器接管前不展示大面板，避免闪现。 */
+#offertrack-badge:not(.ot-ui-ready) > .ot-head,
+#offertrack-badge:not(.ot-ui-ready) > .ot-main,
+#offertrack-badge:not(.ot-ui-ready) > .ot-sub,
+#offertrack-badge:not(.ot-ui-ready) > .ot-actions {
+  display: none;
+}
+
 /* 默认状态：只保留右下角小入口，不自动展开。 */
 #offertrack-badge .ot-launcher {
   display: none;
@@ -94,9 +102,9 @@
   cursor: pointer;
   font-size: 12px;
 }
-#offertrack-badge .ot-sync { flex: 1; background: #246bfe; color: white; }
-#offertrack-badge .ot-sync:disabled { opacity: .6; cursor: default; }
-#offertrack-badge .ot-settings { background: #eef2f7; color: #3b4758; }
+#offertrack-badge .ot-sync { flex: 1; background:#246bfe; color:white; }
+#offertrack-badge .ot-sync:disabled { opacity:.6; cursor:default; }
+#offertrack-badge .ot-settings { background:#eef2f7; color:#3b4758; }
 
 @media (max-width: 560px) {
   #offertrack-badge { right: 12px; bottom: 14px; }

@@ -7,11 +7,11 @@ OfferTrack 是一个 Microsoft Edge 秋招投递管理插件。
 
 一、安装 Edge 插件
 -----------------
-1. 解压 OfferTrack_Edge_v1.5.1.zip。
+1. 解压 OfferTrack_Edge_v1.6.0.zip。
 2. Edge 地址栏打开：edge://extensions/
 3. 开启“开发人员模式”。
 4. 点击“加载解压缩的扩展”。
-5. 选择 OfferTrack_Edge_v1.5.1 文件夹。
+5. 选择 OfferTrack_Edge_v1.6.0 文件夹。
 6. 建议把 OfferTrack 固定到 Edge 工具栏。
 
 
@@ -103,6 +103,8 @@ OfferTrack 支持：
 7. 也可以点击 Edge 工具栏中的 OfferTrack 查看完整预览。
 8. 检查公司、岗位、地点、投递时间、状态后，点击“同步到飞书”。
 9. 同步成功后页面面板会自动收起。
+
+OfferTrack v1.6.0 会优先读取招聘网页自身提供的 JobPosting、hiringOrganization、JSON-LD、application/json、Next/Nuxt 初始化状态，以及常见 companyName / jobTitle / positionName 等底层字段，再结合页面可见内容进行校验。
 
 
 飞书表格主要字段

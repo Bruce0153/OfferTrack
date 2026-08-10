@@ -17,18 +17,24 @@ OfferTrack 是一个用于管理秋招、校招和实习投递记录的 Microsof
 - 可对验证过的网站开启自动同步
 - 页面右下角提供轻量入口：默认收起，点击后才展开同步面板
 
+## 解析机制
+
+OfferTrack 会优先读取网页自身提供的结构化与底层数据，例如 `JobPosting` / `hiringOrganization`、JSON-LD、`application/json`、`__NEXT_DATA__` / `__NUXT_DATA__`、页面初始化状态以及常见 `companyName` / `jobTitle` / `positionName` 字段，再与页面可见 DOM 进行交叉验证。
+
+对于无法从底层数据直接确定的字段，插件会结合页面 Header/Logo、标题层级、岗位代码、状态与日期等信号进行推断。类似“相关公司”“所属公司”“跟进应聘进度”“查询暂存投递记录”等页面栏目或操作说明会被作为低可信文本过滤。
+
 ---
 
 # 一、安装到 Microsoft Edge
 
-1. 解压 `OfferTrack_Edge_v1.5.1.zip`。
+1. 解压 `OfferTrack_Edge_v1.6.0.zip`。
 2. 在 Edge 地址栏打开：
 
    `edge://extensions/`
 
 3. 打开右侧或左侧的“开发人员模式”。
 4. 点击“加载解压缩的扩展”。
-5. 选择解压后的 `OfferTrack_Edge_v1.5.1` 文件夹。
+5. 选择解压后的 `OfferTrack_Edge_v1.6.0` 文件夹。
 6. 建议把 OfferTrack 固定到 Edge 工具栏，方便随时查看解析结果和进入设置。
 
 如果以后只是升级 OfferTrack，并且希望继续使用现有飞书配置，可以把新版文件覆盖到当前插件目录，然后在 `edge://extensions/` 中点击 OfferTrack 的“重新加载”。

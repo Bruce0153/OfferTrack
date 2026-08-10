@@ -58,8 +58,13 @@
   }
 
   function syncLauncher(root) {
-    const countText = (root.querySelector('.ot-count')?.textContent || '0').trim();
-    const count = Number.parseInt(countText, 10) || 0;
+    const semanticCount = globalThis.__offerTrackSemanticState?.records?.length;
+    const rawCount = Number.parseInt((root.querySelector('.ot-count')?.textContent || '0').trim(), 10) || 0;
+    const count = Number.isFinite(semanticCount) ? semanticCount : rawCount;
+    const mainCount = root.querySelector('.ot-count');
+    if (mainCount && Number.isFinite(semanticCount) && Number.parseInt(mainCount.textContent || '0', 10) !== semanticCount) {
+      mainCount.textContent = String(semanticCount);
+    }
     const badge = root.querySelector('.ot-launch-count');
     if (!badge) return;
     badge.textContent = count > 99 ? '99+' : String(count);
@@ -68,9 +73,12 @@
 
   function scan() {
     ensureLauncher(document.getElementById(ROOT_ID));
+    const root = document.getElementById(ROOT_ID);
+    if (root) syncLauncher(root);
   }
 
   scan();
   const pageObserver = new MutationObserver(scan);
   pageObserver.observe(document.documentElement, { childList: true, subtree: true });
+  setInterval(scan, 1200);
 })();

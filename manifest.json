@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OfferTrack - 秋招投递助手",
-  "version": "2.0.0",
-  "description": "自动识别并同步招聘投递记录；支持每 6 小时从飞书读取进行中投递、复用浏览器登录会话自动检查招聘进度并更新状态。",
+  "version": "2.1.0",
+  "description": "自动识别并同步招聘投递记录；支持 Recruitment Provider Registry、每 6 小时自动跟进和飞书状态更新。",
   "permissions": [
     "storage",
     "activeTab",
@@ -49,5 +49,5 @@
       "run_at": "document_idle"
     }
   ],
-  "version_name": "2.0.0"
+  "version_name": "2.1.0"
 }

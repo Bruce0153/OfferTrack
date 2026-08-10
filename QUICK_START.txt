@@ -1,4 +1,4 @@
-OfferTrack v2.0.0 - 快速使用说明
+OfferTrack v2.1.0 - 快速使用说明
 =================================
 
 OfferTrack 是一个 Microsoft Edge 秋招投递管理插件。
@@ -6,11 +6,11 @@ OfferTrack 是一个 Microsoft Edge 秋招投递管理插件。
 
 一、安装插件
 ------------
-1. 解压 OfferTrack_Edge_v2.0.0.zip。
+1. 解压 OfferTrack_Edge_v2.1.0.zip。
 2. Edge 打开：edge://extensions/
 3. 开启“开发人员模式”。
 4. 点击“加载解压缩的扩展”。
-5. 选择 OfferTrack_Edge_v2.0.0 文件夹。
+5. 选择 OfferTrack_Edge_v2.1.0 文件夹。
 
 如果从旧版升级，推荐覆盖原插件目录后，在 edge://extensions/ 点击“重新加载”，通常可以保留原有飞书设置。
 
@@ -72,3 +72,8 @@ OfferTrack 会从飞书读取仍在进行中的投递并开始检查。
 
 默认不检查 Offer / 已结束 / 已撤回记录。
 如果某条记录不想自动检查，可在飞书“自动跟进”字段填写：关闭
+
+
+V2.1 招聘系统识别
+-----------------
+自动跟进会自动识别 Feishu Jobs、Moka、Beisen / Zhiye、自研 SPA 等招聘系统，并在飞书新增“招聘系统”字段。无需手工选择 Provider，也不需要为每家公司单独配置规则。

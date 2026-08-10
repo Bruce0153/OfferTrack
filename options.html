@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OfferTrack 设置</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <header><h1>🎯 OfferTrack 设置</h1><p>第一次只需配置一次飞书，之后打开投递页即可使用。</p></header>
+
+    <section class="panel">
+      <h2>1. 飞书应用</h2>
+      <label>App ID<input id="appId" placeholder="cli_xxxxxxxxx" /></label>
+      <label>App Secret<input id="appSecret" type="password" placeholder="仅保存在本机扩展存储中" /></label>
+      <p class="hint">建议只使用你自己的飞书企业自建应用。v1.1 会限制本地设置只由扩展的可信页面/后台读取；App Secret 只用于向飞书开放平台换取访问令牌。</p>
+    </section>
+
+    <section class="panel">
+      <h2>2. 多维表格</h2>
+      <label>多维表格链接<input id="baseUrl" placeholder="支持 https://xxx.feishu.cn/base/... 或 /wiki/..." /></label>
+      <div class="inline"><label>App Token<input id="appToken" placeholder="自动解析" /></label><label>Table ID<input id="tableId" placeholder="tbl..." /></label></div>
+      <div class="buttons"><button id="parseUrl">从链接解析</button><button id="test">测试连接</button><button id="initFields" class="primary">初始化表头</button></div>
+      <p class="hint">Wiki 链接会自动调用飞书“获取知识空间节点信息”接口换取真实 App Token，因此需要应用具有“查看知识库”权限。</p>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>3. 使用方式</h2>
+      <label class="check"><input id="enabled" type="checkbox" /> 在招聘网页中启用 OfferTrack</label>
+      <label class="check"><input id="autoSync" type="checkbox" /> 对已验证网站自动同步 <span>（某网站必须先手动成功同步一次，才会进入自动同步白名单）</span></label>
+    </section>
+
+    <section class="panel">
+      <details>
+        <summary>高级：特殊网站 CSS Selector</summary>
+        <p class="hint">通用解析失败时使用。域名示例：jobs.example.com。卡片选择器必填，其余可按需填写。</p>
+        <label>域名<input id="customHost" placeholder="jobs.example.com" /></label>
+        <label>每条投递记录（card）<input id="selCard" placeholder=".application-card" /></label>
+        <div class="inline"><label>公司<input id="selCompany" placeholder=".company" /></label><label>岗位<input id="selPosition" placeholder=".job-title" /></label></div>
+        <div class="inline"><label>地点<input id="selLocation" placeholder=".location" /></label><label>时间<input id="selTime" placeholder=".apply-time" /></label></div>
+        <div class="inline"><label>状态<input id="selStatus" placeholder=".status" /></label><label>链接<input id="selLink" placeholder="a.detail" /></label></div>
+        <div class="buttons"><button id="saveCustom">保存此站点规则</button><button id="deleteCustom" class="danger">删除此站点规则</button></div>
+      </details>
+    </section>
+
+    <div class="bottom"><button id="save" class="primary big">保存设置</button><span id="saveMsg"></span></div>
+    <section class="privacy">隐私：插件只解析你打开的 HTTPS 页面中可见内容；默认不会自动上传。只有你点击“同步到飞书”，或开启自动同步且该网站已被你手动验证过后，解析结果才会发送到你配置的飞书多维表格。</section>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

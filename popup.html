@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OfferTrack</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main>
+    <header><div><strong>🎯 OfferTrack</strong><span id="pageState">检测中…</span></div></header>
+    <section class="hero"><span id="count">0</span><small>条可同步投递</small></section>
+    <section id="preview" class="preview"></section>
+    <section class="stats">
+      <div><b id="created">-</b><span>新增</span></div>
+      <div><b id="updated">-</b><span>更新</span></div>
+      <div><b id="skipped">-</b><span>跳过</span></div>
+    </section>
+    <div id="message" class="message"></div>
+    <button id="sync" class="primary">同步到飞书</button>
+    <div class="secondary"><button id="scan">重新解析</button><button id="options">设置</button></div>
+    <footer>上次同步：<span id="lastSync">暂无</span></footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

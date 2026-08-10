@@ -20,8 +20,8 @@
 
 目标：减少后台打开网页次数。
 
-- [ ] Recruitment Provider Registry
-- [ ] Feishu Jobs / Moka / Beisen 等招聘系统类型识别
+- [x] Recruitment Provider Registry（v2.1）
+- [x] Feishu Jobs / Moka / Beisen / 自研 SPA 类型识别（v2.1）
 - [ ] 页面公开 JSON / SSR State / API Endpoint 发现
 - [ ] API → Structured State → Rendered DOM 三级降级
 - [ ] 登录会话健康检查

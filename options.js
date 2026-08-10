@@ -13,6 +13,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('deleteCustom').onclick = deleteCustom;
   $('saveAlias').onclick = saveAlias;
   $('deleteAlias').onclick = deleteAlias;
+  $('runFollowUp').onclick = runFollowUp;
+  $('refreshFollowUp').onclick = refreshFollowUpState;
   $('baseUrl').addEventListener('input', () => {
     const current = $('baseUrl').value.trim();
     if (current !== (settings.baseUrl || '')) {
@@ -20,12 +22,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       $('tableId').value = '';
     }
   });
+  await refreshFollowUpState();
 });
 
 function fill() {
   for (const k of ['appId','appSecret','appToken','tableId','baseUrl']) $(k).value = settings[k] || '';
   $('enabled').checked = settings.enabled !== false;
   $('autoSync').checked = !!settings.autoSync;
+  $('followUpEnabled').checked = !!settings.followUpEnabled;
+  $('followUpIntervalHours').value = Number(settings.followUpIntervalHours || 6);
+  $('followUpMaxSitesPerRun').value = Number(settings.followUpMaxSitesPerRun || 12);
+  $('followUpMode').value = settings.followUpMode || 'open_tabs';
+  $('followUpNotify').checked = settings.followUpNotify !== false;
+  $('followUpIncludeTerminal').checked = !!settings.followUpIncludeTerminal;
 }
 
 function collect() {
@@ -38,6 +47,13 @@ function collect() {
     baseUrl: $('baseUrl').value.trim(),
     enabled: $('enabled').checked,
     autoSync: $('autoSync').checked,
+    followUpEnabled: $('followUpEnabled').checked,
+    followUpIntervalHours: Math.min(72, Math.max(1, Number($('followUpIntervalHours').value || 6))),
+    followUpMaxSitesPerRun: Math.min(30, Math.max(1, Number($('followUpMaxSitesPerRun').value || 12))),
+    followUpMode: $('followUpMode').value || 'open_tabs',
+    followUpNotify: $('followUpNotify').checked,
+    followUpIncludeTerminal: $('followUpIncludeTerminal').checked,
+    followUpTabTimeoutSeconds: Number(settings.followUpTabTimeoutSeconds || 25),
     customSites: settings.customSites || {},
     companyAliases: settings.companyAliases || {},
     trustedAutoSyncHosts: Array.isArray(settings.trustedAutoSyncHosts) ? settings.trustedAutoSyncHosts : []
@@ -92,7 +108,6 @@ async function initFields() {
     setStatus(res?.error || '初始化失败', true);
   }
 }
-
 
 async function saveAlias() {
   const host = normalizeHost($('aliasHost').value);
@@ -149,4 +164,54 @@ function normalizeHost(v) {
 function setStatus(text, error=false) {
   $('status').textContent = text;
   $('status').style.color = error ? '#c94646' : '#647085';
+}
+
+async function runFollowUp() {
+  await save();
+  const btn = $('runFollowUp');
+  btn.disabled = true;
+  btn.textContent = '正在启动…';
+  const request = { id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: Date.now() };
+  await chrome.storage.local.set({ followUpRunRequest: request });
+  setFollowUpStatus('已启动自动跟进任务。任务会在后台继续执行，可关闭设置页；稍后刷新状态即可查看结果。');
+  setTimeout(() => refreshFollowUpState(false), 1200);
+  setTimeout(() => refreshFollowUpState(false), 5000);
+  setTimeout(() => { btn.disabled = false; btn.textContent = '立即跟进一次'; }, 900);
+}
+
+async function refreshFollowUpState(showMessage = true) {
+  try {
+    const stored = await chrome.storage.local.get(['settings','lastFollowUp','followUpLease']);
+    const current = stored.settings || settings || {};
+    const alarm = await chrome.alarms.get('offertrack-follow-up').catch(() => null);
+    const lease = stored.followUpLease || {};
+    const running = lease.status === 'running' && Date.now() - Number(lease.startedAt || 0) < 20 * 60 * 1000;
+    const parts = [];
+    const enabled = !!current.followUpEnabled;
+    const interval = Number(current.followUpIntervalHours || 6);
+    parts.push(enabled ? `自动跟进：已开启（每 ${interval} 小时）` : '自动跟进：未开启');
+    if (alarm?.scheduledTime) parts.push(`下次计划：${fmtTime(alarm.scheduledTime)}`);
+    if (running) parts.push('当前：任务运行中');
+    if (stored.lastFollowUp) parts.push(`上次：${formatFollowUpResult(stored.lastFollowUp)}`);
+    if (showMessage || !$('followUpStatus').textContent || running) setFollowUpStatus(parts.join('；'));
+  } catch (e) {
+    if (showMessage) setFollowUpStatus(e?.message || String(e), true);
+  }
+}
+
+function formatFollowUpResult(r) {
+  if (!r) return '暂无记录';
+  const at = r.at ? fmtTime(r.at) : '';
+  const core = `检查 ${r.checked ?? 0} 条，变化 ${r.changed ?? 0}，待登录 ${r.loginRequired ?? 0}，失败 ${r.failed ?? 0}`;
+  return `${at ? `${at} · ` : ''}${core}`;
+}
+
+function fmtTime(ts) {
+  try { return new Date(Number(ts)).toLocaleString('zh-CN', { hour12: false }); }
+  catch { return ''; }
+}
+
+function setFollowUpStatus(text, error=false) {
+  $('followUpStatus').textContent = text || '';
+  $('followUpStatus').style.color = error ? '#c94646' : '#647085';
 }

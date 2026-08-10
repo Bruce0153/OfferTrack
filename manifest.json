@@ -36,7 +36,8 @@
         "https://*/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "content-ui.js"
       ],
       "css": [
         "content.css"

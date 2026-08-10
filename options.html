@@ -14,7 +14,7 @@
       <h2>1. 飞书应用</h2>
       <label>App ID<input id="appId" placeholder="cli_xxxxxxxxx" /></label>
       <label>App Secret<input id="appSecret" type="password" placeholder="仅保存在本机扩展存储中" /></label>
-      <p class="hint">建议只使用你自己的飞书企业自建应用。v1.1 会限制本地设置只由扩展的可信页面/后台读取；App Secret 只用于向飞书开放平台换取访问令牌。</p>
+      <p class="hint">建议只使用你自己的飞书企业自建应用。OfferTrack 会限制本地设置只由扩展的可信页面/后台读取；App Secret 只用于向飞书开放平台换取访问令牌。</p>
     </section>
 
     <section class="panel">
@@ -33,6 +33,33 @@
     </section>
 
     <section class="panel">
+      <h2>4. 自动跟进招聘进度</h2>
+      <label class="check"><input id="followUpEnabled" type="checkbox" /> 每隔一段时间自动检查飞书中仍在进行的投递</label>
+      <div class="inline">
+        <label>检查间隔（小时）<input id="followUpIntervalHours" type="number" min="1" max="72" step="1" value="6" /></label>
+        <label>单轮最多检查网站数<input id="followUpMaxSitesPerRun" type="number" min="1" max="30" step="1" value="12" /></label>
+      </div>
+      <label>自动跟进模式
+        <select id="followUpMode">
+          <option value="open_tabs">安全模式：只检查已经打开的招聘网站</option>
+          <option value="background_tabs">实验模式：必要时后台打开标签页检查并自动关闭</option>
+        </select>
+      </label>
+      <label class="check"><input id="followUpNotify" type="checkbox" /> 招聘状态发生变化时发送系统通知</label>
+      <label class="check"><input id="followUpIncludeTerminal" type="checkbox" /> 继续检查 Offer / 已结束 / 已撤回记录</label>
+      <p class="hint">推荐先使用“安全模式”。它只复用你当前 Edge 已经登录并打开的招聘网站，不保存招聘网站账号密码。实验模式会按飞书中的岗位链接逐个创建非激活标签页，等待解析后自动关闭；遇到登录过期、验证码或风控时只记录错误，不会尝试绕过验证。</p>
+      <div class="buttons"><button id="runFollowUp" class="primary">立即跟进一次</button><button id="refreshFollowUp">刷新运行状态</button></div>
+      <div id="followUpStatus" class="status"></div>
+    </section>
+
+    <section class="panel">
+      <h2>5. 公司名覆盖（可选）</h2>
+      <p class="hint">如果某个招聘官网没有稳定暴露中文品牌名，可以按域名固定公司展示名。这不是站点 Adapter，只覆盖最终公司名称。</p>
+      <div class="inline"><label>招聘网站域名<input id="aliasHost" placeholder="jobs.example.com" /></label><label>公司名称<input id="aliasCompany" placeholder="例如：某某科技" /></label></div>
+      <div class="buttons"><button id="saveAlias">保存公司名覆盖</button><button id="deleteAlias" class="danger">删除公司名覆盖</button></div>
+    </section>
+
+    <section class="panel">
       <details>
         <summary>高级：特殊网站 CSS Selector</summary>
         <p class="hint">通用解析失败时使用。域名示例：jobs.example.com。卡片选择器必填，其余可按需填写。</p>
@@ -46,7 +73,7 @@
     </section>
 
     <div class="bottom"><button id="save" class="primary big">保存设置</button><span id="saveMsg"></span></div>
-    <section class="privacy">隐私：插件只解析你打开的 HTTPS 页面中可见内容；默认不会自动上传。只有你点击“同步到飞书”，或开启自动同步且该网站已被你手动验证过后，解析结果才会发送到你配置的飞书多维表格。</section>
+    <section class="privacy">隐私：插件不会保存招聘网站账号密码。手动同步、页面自动同步和你主动开启的“自动跟进”会把解析结果/检查状态写入你配置的飞书多维表格；实验后台标签页模式只复用 Edge 当前已有的登录会话。</section>
   </main>
   <script src="options.js"></script>
 </body>

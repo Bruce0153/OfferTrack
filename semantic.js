@@ -178,15 +178,9 @@
         const nextPathText = nextPath.join('.');
         if (COMPANY_CONTEXT_BAD_RE.test(nextPathText)) continue;
         if (typeof val === 'string' || typeof val === 'number') {
-          if (COMPANY_KEY_RE.test(key) || (normalizedKey === 'name' && COMPANY_PARENT_RE.test(pathText))) {
-            addCompany(String(val), 'runtime-json', nextPathText);
-          }
-          if (POSITION_KEY_RE.test(key) || (normalizedKey === 'title' && POSITION_PARENT_RE.test(pathText)) || (normalizedKey === 'name' && POSITION_PARENT_RE.test(pathText) && !COMPANY_PARENT_RE.test(pathText))) {
-            addPosition(String(val), 'runtime-json', nextPathText);
-          }
-        } else if (val && typeof val === 'object') {
-          visit(val, nextPath, depth + 1, seen);
-        }
+          if (COMPANY_KEY_RE.test(key) || (normalizedKey === 'name' && COMPANY_PARENT_RE.test(pathText))) addCompany(String(val), 'runtime-json', nextPathText);
+          if (POSITION_KEY_RE.test(key) || (normalizedKey === 'title' && POSITION_PARENT_RE.test(pathText)) || (normalizedKey === 'name' && POSITION_PARENT_RE.test(pathText) && !COMPANY_PARENT_RE.test(pathText))) addPosition(String(val), 'runtime-json', nextPathText);
+        } else if (val && typeof val === 'object') visit(val, nextPath, depth + 1, seen);
       }
     };
 
@@ -217,9 +211,7 @@
       }
       hit = 0;
       positionRe.lastIndex = 0;
-      while ((m = positionRe.exec(raw)) && hit++ < 150) {
-        addPosition(unescapeJsString(m[2]), 'runtime-regex', m[1]);
-      }
+      while ((m = positionRe.exec(raw)) && hit++ < 150) addPosition(unescapeJsString(m[2]), 'runtime-regex', m[1]);
     }
   }
 
@@ -230,27 +222,14 @@
     addCompany(document.querySelector('meta[name="publisher"]')?.content, 'meta', 'publisher');
 
     const companyAttrs = ['data-company-name','data-company','data-corp-name','data-enterprise-name','data-employer-name','data-organization-name','data-org-name','data-brand-name','data-tenant-name','data-site-name'];
-    for (const el of [...document.querySelectorAll(companyAttrs.map(x => `[${x}]`).join(','))].slice(0, 180)) {
-      for (const attr of companyAttrs) if (el.getAttribute(attr)) addCompany(el.getAttribute(attr), 'declared-dom', attr);
-    }
+    for (const el of [...document.querySelectorAll(companyAttrs.map(x => `[${x}]`).join(','))].slice(0, 180)) for (const attr of companyAttrs) if (el.getAttribute(attr)) addCompany(el.getAttribute(attr), 'declared-dom', attr);
     const positionAttrs = ['data-position-name','data-position-title','data-job-name','data-job-title','data-post-name','data-role-name','data-vacancy-name'];
-    for (const el of [...document.querySelectorAll(positionAttrs.map(x => `[${x}]`).join(','))].slice(0, 300)) {
-      for (const attr of positionAttrs) if (el.getAttribute(attr)) addPosition(el.getAttribute(attr), 'declared-dom', attr);
-    }
+    for (const el of [...document.querySelectorAll(positionAttrs.map(x => `[${x}]`).join(','))].slice(0, 300)) for (const attr of positionAttrs) if (el.getAttribute(attr)) addPosition(el.getAttribute(attr), 'declared-dom', attr);
   }
 
   function collectVisibleBrand(addCompany) {
-    const selectors = [
-      'header [class*="brand"]','header [class*="logo"]','nav [class*="brand"]','nav [class*="logo"]',
-      '[class*="header"] [class*="brand"]','[class*="header"] [class*="logo"]',
-      'header img[alt]','[class*="logo"] img[alt]','img[class*="logo"][alt]'
-    ];
-    for (const selector of selectors) {
-      for (const el of [...document.querySelectorAll(selector)].slice(0, 120)) {
-        const value = el.innerText || el.alt || el.getAttribute?.('aria-label') || el.getAttribute?.('title');
-        addCompany(value, 'header-brand', selector);
-      }
-    }
+    const selectors = ['header [class*="brand"]','header [class*="logo"]','nav [class*="brand"]','nav [class*="logo"]','[class*="header"] [class*="brand"]','[class*="header"] [class*="logo"]','header img[alt]','[class*="logo"] img[alt]','img[class*="logo"][alt]'];
+    for (const selector of selectors) for (const el of [...document.querySelectorAll(selector)].slice(0, 120)) addCompany(el.innerText || el.alt || el.getAttribute?.('aria-label') || el.getAttribute?.('title'), 'header-brand', selector);
     const title = cleanText(document.title);
     for (const p of [title, ...title.split(/[-_|｜·—–]/)]) addCompany(p, 'meta-title', 'document.title');
 
@@ -267,12 +246,7 @@
   }
 
   function collectVisiblePositions(addPosition) {
-    const selectors = [
-      'h1','h2','h3','[role="heading"]',
-      '[class*="job-title"]','[class*="jobTitle"]','[class*="position-title"]','[class*="positionTitle"]',
-      '[class*="job-name"]','[class*="jobName"]','[class*="position-name"]','[class*="positionName"]',
-      '[data-testid*="job"]','[data-testid*="position"]','[itemprop="title"]'
-    ];
+    const selectors = ['h1','h2','h3','[role="heading"]','[class*="job-title"]','[class*="jobTitle"]','[class*="position-title"]','[class*="positionTitle"]','[class*="job-name"]','[class*="jobName"]','[class*="position-name"]','[class*="positionName"]','[data-testid*="job"]','[data-testid*="position"]','[itemprop="title"]'];
     let order = 0;
     for (const selector of selectors) {
       for (const el of [...document.querySelectorAll(selector)].slice(0, 400)) {
@@ -282,7 +256,6 @@
         addPosition(text, /H[1-3]/.test(el.tagName) || el.getAttribute?.('role') === 'heading' ? 'dom-heading' : 'dom-title', `${selector}#${order++}`);
       }
     }
-
     for (const el of [...document.querySelectorAll('body *')].slice(0, 8000)) {
       if (!visible(el)) continue;
       const text = cleanText(el.innerText || el.textContent || '');
@@ -298,9 +271,7 @@
       return records;
     }
     const snap = collectSemanticSnapshot();
-    const goodExistingPositions = new Set(records
-      .filter(r => !isSuspiciousPosition(r.position) && positionScore(r.position, 'existing') >= 9)
-      .map(r => semanticText(r.position)));
+    const goodExistingPositions = new Set(records.filter(r => !isSuspiciousPosition(r.position) && positionScore(r.position, 'existing') >= 9).map(r => semanticText(r.position)));
     const unusedPositionCandidates = snap.positions.filter(c => !goodExistingPositions.has(semanticText(c.value)));
 
     for (const r of records) {
@@ -310,9 +281,7 @@
       } else {
         r.company = cleanedCompany;
         const best = snap.companies[0];
-        if (best && best.score >= 14 && companyAffinity(r.company, best.value) >= 2 && displayPreference(best.value, r.company) > 0) {
-          r.company = best.value;
-        }
+        if (best && best.score >= 14 && companyAffinity(r.company, best.value) >= 2 && displayPreference(best.value, r.company) > 0) r.company = best.value;
       }
 
       const current = normalizePosition(r.position);
@@ -321,9 +290,7 @@
       if (suspicious) {
         const replacement = choosePositionReplacement(current, records.length, unusedPositionCandidates);
         if (replacement) r.position = replacement.value;
-      } else {
-        r.position = current;
-      }
+      } else r.position = current;
     }
 
     const merged = dedupeEnhanced(records);
@@ -334,8 +301,7 @@
 
   function choosePositionReplacement(current, recordCount, candidates) {
     if (!candidates.length) return null;
-    const scored = candidates.map(c => ({ ...c, affinity: textAffinity(current, c.value) }))
-      .sort((a, b) => (b.affinity * 8 + b.score) - (a.affinity * 8 + a.score));
+    const scored = candidates.map(c => ({ ...c, affinity: textAffinity(current, c.value) })).sort((a, b) => (b.affinity * 8 + b.score) - (a.affinity * 8 + a.score));
     if (current && scored[0].affinity >= .35 && scored[0].score >= 10) return scored[0];
     if (recordCount === 1 && scored[0].score >= 12 && (!scored[1] || scored[0].score >= scored[1].score + 2 || scored[0].source.includes('jobcode'))) return scored[0];
     const strong = scored.filter(x => x.score >= 15);
@@ -369,9 +335,7 @@
   }
 
   function companyCore(value) {
-    return normalizeCompany(value).toLowerCase()
-      .replace(/(?:科技股份有限公司|股份有限公司|有限责任公司|有限公司|集团股份有限公司|集团有限公司|集团|公司)$/g, '')
-      .replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
+    return normalizeCompany(value).toLowerCase().replace(/(?:科技股份有限公司|股份有限公司|有限责任公司|有限公司|集团股份有限公司|集团有限公司|集团|公司)$/g, '').replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
   }
 
   function displayPreference(a, b) {
@@ -419,8 +383,9 @@
 
   function richerRecord(a, b) {
     const score = r => (r.company ? 2 : 0) + (r.position ? 4 : 0) + (r.location ? 2 : 0) + (r.applyTime ? 3 : 0) + (r.rawStatus ? 2 : 0) + (r.status && r.status !== '已投递' ? 2 : 0);
-    const primary = score(b) > score(a) ? { ...b } : { ...a };
-    const secondary = primary === b ? a : b;
+    const chooseB = score(b) > score(a);
+    const primary = chooseB ? { ...b } : { ...a };
+    const secondary = chooseB ? a : b;
     for (const k of ['company','position','location','applyTime','rawStatus','url','platform']) if (!primary[k] && secondary[k]) primary[k] = secondary[k];
     if ((!primary.status || primary.status === '已投递') && secondary.status && secondary.status !== '已投递') primary.status = secondary.status;
     return primary;
@@ -463,11 +428,8 @@
   }
 
   function unescapeJsString(s) {
-    try {
-      return JSON.parse(`"${String(s).replace(/"/g, '\\"')}"`);
-    } catch {
-      return String(s || '').replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\n|\\r|\\t/g, ' ');
-    }
+    try { return JSON.parse(`"${String(s).replace(/"/g, '\\"')}"`); }
+    catch { return String(s || '').replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\n|\\r|\\t/g, ' '); }
   }
 
   function leafish(el, text) {
@@ -501,12 +463,8 @@
     const originalSendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
     chrome.runtime.sendMessage = function(message, ...rest) {
       if (message && typeof message === 'object') {
-        if (message.type === 'SYNC_RECORDS' && Array.isArray(message.records)) {
-          message = { ...message, records: enhanceRecords(message.records) };
-        } else if (message.type === 'PAGE_SCAN_RESULT' && Array.isArray(message.payload?.records)) {
-          const records = enhanceRecords(message.payload.records);
-          message = { ...message, payload: { ...message.payload, records } };
-        }
+        if (message.type === 'SYNC_RECORDS' && Array.isArray(message.records)) message = { ...message, records: enhanceRecords(message.records) };
+        else if (message.type === 'PAGE_SCAN_RESULT' && Array.isArray(message.payload?.records)) message = { ...message, payload: { ...message.payload, records: enhanceRecords(message.payload.records) } };
       }
       return originalSendMessage(message, ...rest);
     };

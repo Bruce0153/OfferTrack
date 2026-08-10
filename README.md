@@ -1,4 +1,4 @@
-# OfferTrack v2.0.0
+# OfferTrack v2.1.0
 
 OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge 扩展。
 
@@ -100,8 +100,23 @@ v2 自动跟进字段：
 - 检查状态
 - 登录状态
 - 最近错误
+- 招聘系统
 
 `自动跟进` 默认留空时会参与自动检查；如果某条记录不希望自动检查，可手动填写 `关闭`、`否` 或 `不跟进`。
+
+## v2.1 Recruitment Provider Registry
+
+自动跟进现在会先识别招聘网站所属的招聘系统，而不是按具体公司写适配器。当前支持：
+
+- Feishu Jobs
+- Moka
+- Beisen / Zhiye
+- Self-hosted SPA
+- Generic Web 回退
+
+Provider Registry 会参与检查页 URL 选择、标签页优先级和运行诊断。自动跟进后，飞书会新增/更新“招聘系统”字段。
+
+目前 v2.1 仍以真实页面解析作为实际检查执行层；v2.2 将基于 Provider 的 `strategies / capabilities` 接口加入 API、页面底层 Structured State 与 DOM 的三级降级。
 
 ## 自动跟进
 
@@ -161,8 +176,8 @@ v2 自动跟进字段：
 
 ## V2 当前阶段
 
-v2.0.0 先完成稳定的自动化骨架：
+v2.0.0 已完成稳定的自动化骨架；v2.1.0 在其上增加 Provider Registry：
 
-`Scheduler → 飞书任务 → 浏览器会话 → 页面解析 → 岗位匹配 → 状态 Diff → 飞书更新 → 通知`
+`Scheduler → 飞书任务 → Provider Registry → 浏览器会话 → 页面解析 → 岗位匹配 → 状态 Diff → 飞书更新 → 通知`
 
-后续版本会逐步增加招聘系统 Provider 识别、公开/内部 JSON API 优先检查、会话健康检查和请求级降级策略。详见 `V2_ROADMAP.md`。
+后续版本会逐步增加公开/内部 JSON API 优先检查、Structured State、会话健康检查和请求级降级策略。详见 `V2_ROADMAP.md`。

@@ -118,6 +118,7 @@ function escapeHtml(v) {
   return String(v || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 }
 
+
 async function loadFollowUpState() {
   try {
     const stored = await chrome.storage.local.get(['settings','lastFollowUp','followUpLease']);
@@ -130,6 +131,9 @@ async function loadFollowUpState() {
     if (stored.lastFollowUp?.at) {
       parts.push(`上次 ${new Date(stored.lastFollowUp.at).toLocaleString('zh-CN', { hour12:false })}`);
       parts.push(`变化 ${stored.lastFollowUp.changed ?? 0}`);
+      if (Array.isArray(stored.lastFollowUp.providers) && stored.lastFollowUp.providers.length) {
+        parts.push(`系统 ${stored.lastFollowUp.providers.map(x => `${x.name}:${x.sites}`).join('/')}`);
+      }
     }
     if (alarm?.scheduledTime) parts.push(`下次 ${new Date(alarm.scheduledTime).toLocaleString('zh-CN', { hour12:false })}`);
     $('followUpMeta').textContent = parts.join(' · ') || '可在设置中开启每 6 小时自动跟进';

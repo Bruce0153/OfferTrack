@@ -3,7 +3,7 @@ const vm = require('vm');
 const path = require('path');
 const assert = require('assert');
 
-const fieldNames = ['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','下一步行动','面试时间','优先级','备注','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误'];
+const fieldNames = ['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','下一步行动','面试时间','优先级','备注','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统'];
 const records = [
   { record_id:'jd-r', fields:{
     '公司':'京东','岗位名称':'算法工程师-AI Infra','当前状态':'筛选中','招聘平台':'campus.jd.com',
@@ -75,6 +75,7 @@ context.importScripts=()=>{};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname,'..','background.js'),'utf8'),context,{filename:'background.js'});
 context.OfferTrackFollowUpCore=require(path.join(__dirname,'..','followup-core.js'));
+context.OfferTrackProviderRegistry=require(path.join(__dirname,'..','provider-registry.js'));
 vm.runInContext(fs.readFileSync(path.join(__dirname,'..','followup-background.js'),'utf8'),context,{filename:'followup-background.js'});
 
 (async()=>{
@@ -88,6 +89,9 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'..','followup-background.js
   assert(jd && jd.fields['当前状态']==='笔试/测评');
   assert(intsig && intsig.fields['当前状态']==='面试中');
   assert(jd.fields['检查状态']==='已检查' && intsig.fields['登录状态']==='可访问');
+  assert.strictEqual(jd.fields['招聘系统'],'Self-hosted SPA');
+  assert.strictEqual(intsig.fields['招聘系统'],'Beisen / Zhiye');
+  assert(result.providers.some(x=>x.id==='self_hosted_spa') && result.providers.some(x=>x.id==='beisen_zhiye'));
   assert(store.lastFollowUp && store.lastFollowUp.changed===2);
   console.log('OfferTrack end-to-end mocked follow-up flow: PASS');
   console.log({checked:result.checked,changed:result.changed,updates:flattened.map(x=>({id:x.record_id,status:x.fields['当前状态'],check:x.fields['检查状态']}))});

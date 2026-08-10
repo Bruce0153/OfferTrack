@@ -1,0 +1,10 @@
+const fs = require('fs');
+const path = require('path');
+const assert = require('assert');
+const source = fs.readFileSync(path.join(__dirname, '..', 'service-worker.js'), 'utf8');
+const provider = source.indexOf("provider-registry.js");
+const background = source.indexOf("followup-background.js");
+assert(provider >= 0, 'service worker must load provider-registry.js');
+assert(background >= 0, 'service worker must load followup-background.js');
+assert(provider < background, 'provider registry must load before follow-up background');
+console.log('OfferTrack service worker import order: PASS');

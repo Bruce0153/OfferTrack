@@ -203,7 +203,8 @@ function formatFollowUpResult(r) {
   if (!r) return '暂无记录';
   const at = r.at ? fmtTime(r.at) : '';
   const core = `检查 ${r.checked ?? 0} 条，变化 ${r.changed ?? 0}，待登录 ${r.loginRequired ?? 0}，失败 ${r.failed ?? 0}`;
-  return `${at ? `${at} · ` : ''}${core}`;
+  const providers = Array.isArray(r.providers) && r.providers.length ? ` · 系统 ${r.providers.map(x => `${x.name}:${x.sites}`).join('/')}` : '';
+  return `${at ? `${at} · ` : ''}${core}${providers}`;
 }
 
 function fmtTime(ts) {

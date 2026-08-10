@@ -2,9 +2,10 @@
   'use strict';
 
   const Core = globalThis.OfferTrackFollowUpCore;
+  const Providers = globalThis.OfferTrackProviderRegistry;
   const ALARM = 'offertrack-follow-up';
   const LEASE_MS = 20 * 60 * 1000;
-  const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误'];
+  const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统'];
   let runningPromise = null;
 
   function normalizedSettings(input = {}) {
@@ -111,17 +112,19 @@
     await ensureFollowUpFields(settings, token);
     const existing = await listAllRecords(settings, token);
     const targets = Core.selectTargets(existing, cfg);
-    const allGroups = Core.groupTargets(targets);
+    const rawGroups = Core.groupTargets(targets);
+    const allGroups = Providers?.enrichGroups ? Providers.enrichGroups(rawGroups, Core) : rawGroups;
     const groups = allGroups.slice(0, cfg.followUpMaxSitesPerRun);
 
     const result = {
       ok: true, source, mode: cfg.followUpMode, at: Date.now(),
       totalRecords: targets.length, totalSites: allGroups.length, scheduledSites: groups.length,
+      providers: Providers?.summarize ? Providers.summarize(allGroups) : [],
       checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, details: []
     };
 
     for (const group of groups) {
-      const inspected = await inspectGroup(group, cfg).catch(err => ({ host: group.host, status: 'error', error: err?.message || String(err), records: [], page: null }));
+      const inspected = await inspectGroup(group, cfg).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
       const patchResult = await applyGroupResult(settings, token, group, inspected);
       for (const k of ['checked','changed','failed','loginRequired','waiting','unmatched']) result[k] += patchResult[k] || 0;
       if (patchResult.detail) result.details.push(patchResult.detail);
@@ -143,7 +146,7 @@
       tab = await chrome.tabs.create({ url: group.url, active: false });
       createdTab = true;
     }
-    if (!tab) return { host: group.host, status: 'waiting', error: '没有找到已打开的招聘网站页面', records: [], page: null };
+    if (!tab) return { host: group.host, provider: group.provider, status: 'waiting', error: '没有找到已打开的招聘网站页面', records: [], page: null };
 
     try {
       if (createdTab) await waitForTabLoad(tab.id, cfg.followUpTabTimeoutSeconds * 1000);
@@ -151,9 +154,9 @@
       const latestTab = await chrome.tabs.get(tab.id).catch(() => tab);
       const finalUrl = latestTab?.url || tab.url || group.url;
       if (/\/(?:login|signin|sign-in)(?:[/?#]|$)|(?:login|signin)=/i.test(finalUrl || '')) {
-        return { host: group.host, status: 'login', error: '招聘网站登录状态已失效', records: [], page: { url: finalUrl } };
+        return { host: group.host, provider: group.provider, status: 'login', error: '招聘网站登录状态已失效', records: [], page: { url: finalUrl } };
       }
-      if (!scan?.ok) return { host: group.host, status: 'error', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
+      if (!scan?.ok) return { host: group.host, provider: group.provider, status: 'error', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
       let records = Array.isArray(scan.records) ? scan.records : [];
       try {
         const enhanced = await chrome.tabs.sendMessage(tab.id, { type: 'ENHANCE_RECORDS', records });
@@ -161,11 +164,11 @@
       } catch {}
       if (!records.length) {
         const probe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
-        if (probe?.loginRequired) return { host: group.host, status: 'login', error: '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
-        if (probe?.blocked) return { host: group.host, status: 'error', error: '页面出现验证码或访问限制', records: [], page: scan.page || { url: finalUrl } };
-        return { host: group.host, status: 'empty', error: '页面已打开，但没有解析到投递记录', records: [], page: scan.page || { url: finalUrl } };
+        if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', error: '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
+        if (probe?.blocked) return { host: group.host, provider: group.provider, status: 'error', error: '页面出现验证码或访问限制', records: [], page: scan.page || { url: finalUrl } };
+        return { host: group.host, provider: group.provider, status: 'empty', error: '页面已打开，但没有解析到投递记录', records: [], page: scan.page || { url: finalUrl } };
       }
-      return { host: group.host, status: 'ok', records, page: scan.page || { url: finalUrl } };
+      return { host: group.host, provider: group.provider, status: 'ok', records, page: scan.page || { url: finalUrl } };
     } finally {
       if (createdTab && tab?.id != null) await chrome.tabs.remove(tab.id).catch(() => {});
     }
@@ -179,8 +182,8 @@
     });
     if (!matching.length) return null;
     const score = t => {
-      let s = Core.urlScore(t.url || '');
-      if (Core.canonicalUrl(t.url || '') === Core.canonicalUrl(group.url)) s += 20;
+      let s = Providers?.tabScore ? Providers.tabScore(group, t.url || '', Core) : Core.urlScore(t.url || '');
+      if (!Providers?.tabScore && Core.canonicalUrl(t.url || '') === Core.canonicalUrl(group.url)) s += 20;
       if (t.active) s += 2;
       return s;
     };
@@ -218,24 +221,24 @@
     const now = new Date().toLocaleString('zh-CN', { hour12: false });
     const patches = [];
     const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, detail: null };
-    const common = { '最后检查时间': now };
+    const common = { '最后检查时间': now, '招聘系统': group.providerName || group.provider?.name || 'Generic Web' };
 
     if (inspected.status === 'waiting') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '等待打开招聘网站', '登录状态': '未知', '最近错误': inspected.error || '' } });
       summary.waiting = group.records.length;
-      summary.detail = { host: group.host, status: 'waiting', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'waiting', message: inspected.error };
     } else if (inspected.status === 'login') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '需要登录', '登录状态': '已失效', '最近错误': inspected.error || '' } });
       summary.loginRequired = group.records.length;
-      summary.detail = { host: group.host, status: 'login', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'login', message: inspected.error };
     } else if (inspected.status === 'error') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '检查失败', '登录状态': '未知', '最近错误': safeCell(inspected.error, 500) } });
       summary.failed = group.records.length;
-      summary.detail = { host: group.host, status: 'error', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'error', message: inspected.error };
     } else if (inspected.status === 'empty') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '未解析到投递', '登录状态': '可访问', '最近错误': inspected.error || '' } });
       summary.unmatched = group.records.length;
-      summary.detail = { host: group.host, status: 'empty', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'empty', message: inspected.error };
     } else {
       const matches = Core.matchScanned(group.records, inspected.records || []);
       const changedItems = [];
@@ -262,7 +265,7 @@
         }
         patches.push({ record_id: target.recordId, fields });
       }
-      summary.detail = { host: group.host, status: 'ok', checked: summary.checked, changed: summary.changed, unmatched: summary.unmatched, changes: changedItems.slice(0, 5) };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'ok', checked: summary.checked, changed: summary.changed, unmatched: summary.unmatched, changes: changedItems.slice(0, 5) };
     }
 
     for (const chunk of chunks(patches, 500)) {

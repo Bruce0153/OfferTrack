@@ -1,97 +1,70 @@
-# OfferTrack v2.0.0 内部测试报告
+# OfferTrack v2.1.0 内部测试报告
 
-测试环境：GPT 沙箱中的 Node.js 静态/模拟测试。
+测试环境：GPT 沙箱中的 Node.js 静态测试、Mock Browser E2E 与代表性招聘系统样本。
 
-说明：沙箱无法访问你本机 Edge 的登录 Cookie，因此不能真实登录招聘官网执行账号态网络测试。本阶段使用你此前提供的真实招聘 URL/字段样本构造回归数据，验证调度核心、任务分组、URL 选择、岗位匹配和状态变化逻辑；真实登录态检查需要安装到本机 Edge 后继续做浏览器回归。
+说明：沙箱不能访问用户本机 Edge 的真实招聘网站登录 Cookie，因此账号态网络测试仍需安装到本机 Edge 后验证。本轮重点验证 Provider Registry、Provider URL 选择、自动跟进集成与旧版回归。
 
-## 代表性招聘系统
+## Provider Registry 代表样本
 
-### 飞书招聘页面
+### Feishu Jobs
 
-样本：
-
-- `xiaopeng.jobs.feishu.cn/398875/position/application`
-- `arashivision.jobs.feishu.cn/campus/position/application`
-
-检查：进行中记录能进入自动跟进队列；不同公司域名分别分组；申请页 URL 优先于详情页。
-
-结果：PASS
-
-### 京东自研 SPA
-
-样本：
-
-- `https://campus.jd.com/api/wx/position/index#/myDeliver`
-- 岗位：`算法工程师-AI Infra`
-
-检查：Hash 路由申请页可作为检查 URL；旧状态 `筛选中` 与新状态 `笔试/测评` 可匹配并触发状态变化。
-
-结果：PASS
-
-### 北森 / 智业招聘
-
-样本：
-
-- `https://intsig.zhiye.com/personal/deliveryRecord`
-- 岗位：`27届校招-大模型算法工程师(J14380)`
-
-检查：带岗位代码的标题能与扫描结果高置信匹配；不同状态触发 Diff。
-
-结果：PASS
+- `*.jobs.feishu.cn/.../position/application`
+- 覆盖普通 position/application、campus/position/application、campusrecruitment/position/application。
+- 结果：PASS
 
 ### Moka
 
-样本：
+- `app.mokahr.com/...#/candidateHome/applications`
+- 结果：PASS
 
-- `https://app.mokahr.com/...#/candidateHome/applications`
+### Beisen / Zhiye
 
-检查：候选人申请页 URL 得分高于普通岗位详情 URL。
+- `*.zhiye.com/personal/deliveryRecord`
+- 结果：PASS
 
-结果：PASS
+### Self-hosted SPA
 
-## 调度器 Smoke Test
+- Hash Router 的 `#/.../my-apply` / `#/myDeliver` 类页面，以及通用 candidate/account/apply 路径。
+- 不依赖具体公司名称。
+- 结果：PASS
 
-- 开启自动跟进、间隔 6 小时时创建 `offertrack-follow-up` alarm。
-- `periodInMinutes = 360`。
-- 关闭自动跟进后清除 alarm。
+### Generic Web
 
-结果：PASS
+- 无已知 Provider 特征的网站安全落入 Generic Web。
+- 结果：PASS
 
-## 安全逻辑
+## 防硬编码检查
 
-- `Offer / 已结束 / 已撤回` 默认不进入跟进队列：PASS
-- 飞书“自动跟进=关闭”不进入跟进队列：PASS
-- 状态未变化时不更新当前状态：PASS（纯逻辑）
-- 页面未匹配岗位时不覆盖当前状态：代码路径检查 PASS
-
-## Mocked End-to-End 自动跟进
-
-模拟飞书中两条进行中记录：
-
-- 京东：`筛选中 → 笔试/测评`
-- INTSIG：`筛选中 → 面试中`
-
-模拟 Edge 中已经打开对应招聘页面，执行完整链路：
-
-`读取飞书 → 分组 → 找 Tab → SCAN_PAGE → ENHANCE_RECORDS → 岗位匹配 → 状态 Diff → batch_update`
-
-结果：
-
-- checked = 2
-- changed = 2
-- 两条记录正确写入新状态
-- `检查状态=已检查`
-- `登录状态=可访问`
+Provider Registry 源码不得包含代表公司的中文/英文公司名，仅允许招聘系统域名与通用 URL 模式。
 
 结果：PASS
 
-## Background Tab 实验模式
+## 自动跟进 E2E
 
-模拟小鹏飞书招聘页面未打开：
+Mock 飞书记录包含：
 
-- 自动创建 `active:false` 标签页
-- 页面加载完成后扫描
-- 状态发生变化后回写飞书
-- 完成后自动关闭创建的标签页
+- 自研 SPA 类型：岗位状态 `筛选中 -> 笔试/测评`
+- Beisen / Zhiye：岗位状态 `筛选中 -> 面试中`
+- Feishu Jobs：后台 Tab 模式 `筛选中 -> 笔试/测评`
+
+检查：
+
+- Provider 正确识别。
+- 状态 Diff 正确。
+- 飞书更新增加“招聘系统”。
+- Provider 统计写入 lastFollowUp。
+- 未匹配/失败路径不覆盖当前状态。
 
 结果：PASS
+
+## 回归测试
+
+- `provider-registry.test.js`: PASS
+- `service-worker-imports.test.js`: PASS
+- `followup-core.test.js`: PASS
+- `background-scheduler.test.js`: PASS
+- `background-followup-flow.test.js`: PASS
+- `background-tab-mode.test.js`: PASS
+- 全部 JavaScript `node --check`: PASS
+- Manifest 引用检查: PASS
+- ZIP 完整性检查: PASS

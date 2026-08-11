@@ -1,223 +1,191 @@
-# OfferTrack v2.3.0
+# OfferTrack v2.5.0
 
-> v2.3.0 在 v2.2.1 性能热修复基础上加入 Session Manager。自动跟进现在会记录招聘网站会话健康状态，并对登录失效、验证码和访问受限进行冷却与恢复管理。
+> v2.5.0 将自动跟进升级为 Follow-up Orchestrator：Job Queue 2.0 + Application Matching 2.0 + Status State Machine + Change Journal。目标不是增加更多网站特例，而是降低错误匹配、错误状态覆盖和长期运行资源开销。
 
-OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge 扩展。
+OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge / Chromium Manifest V3 扩展。
 
-打开招聘网站的“我的投递 / 投递记录 / 应聘记录 / 我的申请”等页面后，OfferTrack 会解析公司、岗位、地点、投递时间和招聘流程状态，在同步前提供预览，并把记录去重写入自己的飞书多维表格。
+它可以从招聘网站的“我的投递 / 投递记录 / 应聘记录 / 我的申请”等页面解析公司、岗位、地点、投递时间和招聘流程状态，预览后去重同步到飞书多维表格，并自动跟进仍在进行中的招聘流程。
 
-从 v2.0.0 开始，OfferTrack 增加“自动跟进”能力：它可以定时从飞书读取仍在进行中的投递，复用当前 Edge 浏览器已有的招聘网站登录会话检查进度；状态发生变化时更新飞书并发送系统通知。
+## 核心原则
+
+- Provider 泛化优先于 Company Adapter。
+- `API GET → Structured State → Page Scan`，三级降级始终保留。
+- 宁可不更新，也不能错误更新。
+- 事件驱动优于轮询。
+- Cookie 只作为 Session Evidence；Cookie value 永不持久化、日志、飞书、通知或外发。
 
 ## 主要功能
 
-- 自动解析招聘网站投递记录
-- 底层结构化数据 + 页面语义 + 可见 DOM 多源融合
-- 公司、岗位、地点、投递时间、状态清洗
-- 同步前预览
-- 飞书多维表格去重新增 / 更新
-- 每 6 小时自动跟进招聘进度（可修改间隔）
-- 默认只检查已经打开的招聘网站
-- 可选实验模式：后台逐个打开招聘网站页面检查，完成后自动关闭
-- 登录失效、页面无记录、匹配失败等情况写入飞书检查状态，不会覆盖已有招聘状态
-- 招聘状态变化时发送 Edge / 系统通知
-- `API GET → Structured State → Page Scan` 三级降级
-- v2.3 招聘网站 Session Manager：健康 / 需登录 / 需验证 / 访问受限 / 检查异常
-- 登录失效和风控站点自动进入冷却期，避免每轮重复打开；手动立即跟进可主动复检恢复
+- 自动解析招聘网站投递记录并同步飞书。
+- Feishu Jobs、Moka、Beisen / Zhiye、Self-hosted SPA、Generic Web Provider Registry。
+- 安全 GET API、Structured State、DOM/Semantic Parser 三级检查。
+- Session Manager：健康 / 需要登录 / 需要验证 / 访问受限 / 检查异常 / pending recheck。
+- Job Queue 2.0：Alarm、Manual、Cookie Change、Page Open、Retry 统一调度；同一 host 多岗位合并检查。
+- Application Matching 2.0：优先稳定 ID 和 Canonical URL，再使用岗位名、投递时间和语义证据；低置信和歧义结果不自动更新。
+- Status State Machine：允许正常前进和跳级，阻止错误回退；终态要求强证据。
+- Change Journal：只记录真正成功提交的状态变化和匹配置信度。
+- 登录失效、验证码和风控进入冷却，不反复打开网站。
+- 状态变化后发送 Edge / 系统通知。
 
 ## 安装
 
-1. 解压插件目录。
-2. 在 Edge 地址栏打开 `edge://extensions/`。
+1. 解压 `OfferTrack_Edge_v2.5.0.zip`。
+2. Edge 打开 `edge://extensions/`。
 3. 开启“开发人员模式”。
 4. 点击“加载解压缩的扩展”。
-5. 选择 OfferTrack 插件文件夹。
+5. 选择解压后的 OfferTrack 文件夹。
 
-升级旧版时，建议用新版文件覆盖原来已经加载的固定目录，然后在 `edge://extensions/` 点击“重新加载”，这样通常可以保留现有飞书配置。
+升级旧版本时，建议覆盖原来已经加载的固定目录，然后在 `edge://extensions/` 点击“重新加载”，通常可以保留已有本地飞书配置。
 
 ## 配置飞书
 
 ### 1. 创建企业自建应用
 
-打开飞书开放平台：
+打开飞书开放平台：`https://open.feishu.cn/app?lang=zh-CN`
 
-`https://open.feishu.cn/app?lang=zh-CN`
-
-创建“企业自建应用”，例如命名为 `OfferTrack`。
-
-进入应用的“凭证与基础信息”，复制：
-
-- App ID
-- App Secret
-
-把它们填入 OfferTrack 设置页。
-
-### 2. 配置应用身份权限
-
-进入飞书应用的“权限管理”，使用“应用身份”开通多维表格读写权限。推荐直接开通：
+创建企业自建应用，复制 App ID / App Secret，并在应用身份下至少开通：
 
 - `bitable:app`
+- Wiki 多维表格需要 `wiki:node:read`
 
-如果你的多维表格链接是 `/wiki/...`，还需要知识库节点读取权限，例如：
+权限修改后如提示待发布，需要发布新的应用版本。
 
-- `wiki:node:read`
+### 2. 添加文档应用
 
-权限调整后，如果飞书后台提示需要发布新版本，请到“版本管理与发布”中发布应用版本，使权限真正生效。
+打开目标飞书多维表格，在右上角菜单中添加 OfferTrack 对应的文档应用，并给足够的编辑权限。
 
-### 3. 创建多维表格并添加文档应用
+在 OfferTrack 设置页粘贴多维表格链接后依次执行：
 
-新建一个飞书多维表格，例如：`2027届秋招投递记录`。
-
-打开该多维表格，在右上角菜单中找到“添加文档应用”，把刚创建的 `OfferTrack` 应用加入当前多维表格，并给它编辑权限。若多维表格启用了高级权限，需要确保该应用拥有足够的文档管理/编辑权限。
-
-然后复制当前多维表格完整链接，粘贴到 OfferTrack 设置页：
-
-1. 点击“从链接解析”
-2. 点击“测试连接”
-3. 点击“初始化表头”
-4. 点击“保存设置”
-
-OfferTrack 会自动补齐需要的字段。
+1. 从链接解析
+2. 测试连接
+3. 初始化表头
+4. 保存设置
 
 ## 飞书字段
 
-基础投递字段：
+基础字段包括：公司、岗位名称、工作地点、投递时间、当前状态、招聘平台、岗位链接、最近更新时间、下一步行动、面试时间、优先级、备注、唯一记录ID、原始状态。
 
-- 公司
-- 岗位名称
-- 工作地点
-- 投递时间
-- 当前状态
-- 招聘平台
-- 岗位链接
-- 最近更新时间
-- 下一步行动
-- 面试时间
-- 优先级
-- 备注
-- 唯一记录ID
-- 原始状态
+自动跟进字段包括：自动跟进、最后检查时间、状态更新时间、检查状态、登录状态、最近错误、招聘系统、检查方式。
 
-v2 自动跟进字段：
+`自动跟进` 留空时默认参与检查；填写 `关闭`、`否` 或 `不跟进` 时跳过。
 
-- 自动跟进
-- 最后检查时间
-- 状态更新时间
-- 检查状态
-- 登录状态
-- 最近错误
-- 招聘系统
-- 检查方式
+## Provider Strategy Executor
 
-`自动跟进` 默认留空时会参与自动检查；如果某条记录不希望自动检查，可手动填写 `关闭`、`否` 或 `不跟进`。
-
-
-## v2.2+ Provider Strategy Executor
-
-自动跟进现在不再直接跳到页面 DOM，而是按 Provider 能力依次尝试：
+自动跟进依次尝试：
 
 `API GET → Structured State → Page Scan`
 
 ### API GET
 
-- 只尝试 HTTPS、同源、明显属于申请/投递查询的 GET 地址。
-- 路径包含 `submit / create / update / delete / withdraw / cancel` 等动作词时直接拒绝。
-- 只在返回 JSON 能高置信匹配飞书现有岗位时采用结果。
-- API 失败、401/403/405、非 JSON、响应过大或匹配不足时自动降级。
-- 成功且 URL 不含 token/sign/session 等敏感参数时，才会保存本机 API Hint 供后续复用。
+- 只尝试 HTTPS、同源、明显属于申请/投递查询的只读 GET 地址。
+- 包含 submit / create / update / delete / withdraw / cancel 等动作语义时拒绝。
+- 只在返回数据能够高置信匹配飞书已有岗位时采用结果。
+- API 失败、非 JSON、响应过大或匹配不足时自动降级。
+- API Hint 只有在 URL 不含 token/sign/session 等敏感参数时才允许缓存。
 
 ### Structured State
 
-OfferTrack 会读取：
-
-- `application/json / ld+json` script
-- `__NEXT_DATA__ / __NUXT__ / __INITIAL_STATE__` 等常见 SSR/Store
-- 页面中已经存在的结构化申请记录
-
-读取过程只做有界复制和 `JSON.parse`，不执行网页脚本、不使用 `eval`，也不会保存页面里的登录凭证。
+读取页面已有 JSON、SSR 数据和少量常见 MAIN-world Store；全程使用节点、深度、数组和字符串预算，不执行 `eval`，不无限复制大对象。
 
 ### Page Scan
 
-如果前两层无法得到足够可信的投递记录，继续使用 v1/v2 已验证的 DOM + Semantic Parser。任何上层策略失败都不会阻断页面兜底。
+前两层证据不足时使用 DOM + Semantic Parser 兜底。任何上层策略失败都不会阻断 Page Scan。
 
-当前 Provider：Feishu Jobs、Moka、Beisen / Zhiye、Self-hosted SPA、Generic Web。
+## Job Queue 2.0
 
+自动跟进事件统一进入站点级任务队列：
 
-## v2.3 Session Manager
+`Alarm / Manual / Cookie Change / Page Open / Retry → Priority Queue`
 
-OfferTrack 不读取招聘网站 Cookie，也不保存手机号、密码或验证码，而是根据真实检查结果维护每个招聘域名的轻量会话健康状态：
+原则：
 
-- 健康
-- 需要登录
-- 需要安全验证
-- 访问受限 / 请求频繁
-- 检查异常
+- 同一 host 多个岗位合并为一次站点检查。
+- 后台站点任务保持单活跃实例，避免并发打开多个招聘页。
+- 手工触发优先级最高，其次是 Cookie Change、Page Open、Alarm、Retry。
+- 普通网络/检查错误使用有上限指数退避。
+- 登录失效、验证码、安全验证、rate limit 不自动反复 retry。
 
-当自动任务确认某个站点需要登录、验证码或出现访问限制时，该站点会进入冷却期，后续 alarm 不再反复打开它。默认冷却：需要登录 12 小时、验证码 2 小时、访问受限 6 小时；连续 3 次普通检查异常后冷却 1 小时。
+## Application Matching 2.0
 
-恢复方式很简单：你重新登录/完成验证后，直接点击“立即跟进一次”；手动跟进会绕过冷却重新验证。若该招聘网站已经被你主动打开，自动任务也会允许重新检查。
+匹配优先级大致为：
 
-Session Manager 只在 `chrome.storage.local` 保存域名、Provider、状态、原因、检查时间、失败次数和冷却时间，不保存响应正文或认证凭据。设置页可以查看网站会话列表、打开第一个需要处理的网站，也可以清理这些健康记录；清理不会退出网站登录。
+`Provider Application ID → Application/Delivery ID → Job/Position ID → Canonical URL → 岗位名 + 投递时间 → Semantic Evidence`
 
-## 自动跟进
+自动更新最低置信度为 0.86。多个候选差距过小会被判为歧义；ID 明确冲突时直接拒绝匹配。低置信或歧义结果不会覆盖飞书旧状态。
 
-进入 OfferTrack 设置 → “自动跟进招聘进度”。
+## Status State Machine
 
-### 安全模式（推荐）
+主要状态：
 
-只检查当前 Edge 已经打开的招聘网站页面。
+`已投递 → 筛选中 → 笔试/测评 → 面试中 → Offer`
 
-优点：
+允许正常向前推进和合理跳级，例如 `筛选中 → 面试中`。
 
-- 不主动打开新页面
-- 不保存招聘网站账号密码
-- 直接复用你已经登录的浏览器会话
-- 对网页影响最小
+默认阻止 `面试中 → 已投递` 等错误回退。`已结束 / 已撤回` 为强终态，只有高置信匹配且原始状态存在明确结束/撤回证据时才允许进入。终态默认保持，不因后续弱页面证据重新打开流程。
 
-如果某个招聘网站没有打开，本轮会在飞书写入“等待打开招聘网站”，不会把原招聘状态改掉。
+## Cookie Session Evidence
 
-### 实验模式：后台标签页
+v2.5 可以读取与已有招聘站点相关的 Cookie，但 Cookie 不是“已登录”的真值，只用于辅助判断 Session Health。
 
-如果没有找到已经打开的招聘页面，OfferTrack 会：
+只保留这种摘要：
 
-1. 从飞书读取该招聘网站的岗位链接
-2. 创建一个非激活标签页
-3. 等待招聘网页加载
-4. 调用同一套通用解析器读取投递状态
-5. 和飞书旧状态比较
-6. 写回变化
-7. 自动关闭该标签页
+- strong / possible / weak / none
+- cookieCount
+- sessionLikeCount
+- httpOnlyCount
+- secureCount
+- expiryState
 
-如果遇到登录过期、短信登录、验证码、人机验证或网站风控，只记录失败/待登录状态，不会尝试绕过验证。
+Cookie value 使用后立即丢弃，并且：
 
-### 哪些记录默认不检查
+- 不写 `chrome.storage`
+- 不写飞书
+- 不写 console / 诊断日志
+- 不显示通知
+- 不发送第三方服务器
 
-默认跳过：
+Cookie Change 只有在对应 host 已属于 OfferTrack 的招聘站点，并且此前存在会话异常时，才允许触发低频快速复检。
 
-- Offer
-- 已结束
-- 已撤回
-- `自动跟进` 字段明确填写“关闭/否/不跟进”的记录
+## Change Journal
 
-可在设置中打开“继续检查终态记录”。
+只记录真正成功提交的招聘状态变化：
 
-## 自动跟进的安全原则
+- 时间
+- 公司
+- 岗位
+- 旧状态
+- 新状态
+- Provider
+- 检查方式
+- matchConfidence
+- matchMethod
 
-自动任务只在高置信匹配到同一岗位时更新 `当前状态`。
+不会保存 Cookie、Token、验证码、API response body、手机号等敏感信息。
 
-以下情况不会覆盖原状态：
+## 性能保护
 
-- 页面打不开
-- 网站需要重新登录
-- 页面解析不到投递记录
-- 页面有记录但无法与飞书中的岗位高置信匹配
-- 出现验证码或风控提示
+OfferTrack 保留 v2.2.1 后的性能红线：
 
-这些情况只更新 `最后检查时间 / 检查状态 / 登录状态 / 最近错误`。
+- Production Code 不使用高频 `setInterval` URL/DOM 轮询。
+- MutationObserver 不使用 `characterData:true`。
+- Observer 忽略 OfferTrack 自己的 UI，避免自身 DOM 反馈循环。
+- `AUTO_SCAN_MIN_GAP >= 4000ms`。
+- `scanPromise` 阻止并发 Page Scan。
+- Structured State / MAIN-world 数据复制严格有预算。
+- SPA 路由使用 `hashchange / popstate / pageshow / visibilitychange` 与受限 MutationObserver。
 
-## V2 当前阶段
+## 自动跟进安全原则
 
-v2.0.0 已完成自动化骨架；v2.1.0 增加 Provider Registry；v2.2.x 增加三级检查执行器和性能热修；v2.3.0 增加 Session Manager：
+以下情况不会覆盖已有招聘状态：页面打不开、需要重新登录、验证码/风控、没有解析到投递记录、岗位匹配不足、匹配歧义、状态机判断为错误回退、终态证据不足。
 
-`Scheduler → 飞书任务 → Provider Registry → API GET → Structured State → Page Scan → 岗位匹配 → 状态 Diff → 飞书更新 → 通知`
+这些情况下只更新检查相关字段或等待用户处理。
 
-后续版本将继续加强任务队列、状态机和诊断中心。详见 `V2_ROADMAP.md`。
+## 当前版本链路
+
+`Scheduler / Event → Job Queue → Provider Registry → Session Manager → Cookie Evidence → API GET → Structured State → Page Scan → Application Matching → Status State Machine → Feishu Update → Change Journal / Notification`
+
+## 验证说明
+
+仓库自动测试覆盖 Node 语法、Manifest、Mock Browser E2E、Provider、API-first、Structured State、三级降级、Session、Application Matching、Status State Machine、Queue、Journal、Cookie 隐私边界和性能安全规则。
+
+GitHub CI 无法等价模拟真实 Microsoft Edge、真实招聘网站登录态、验证码和风控。版本合入 `v2` 前仍应在真实 Edge 上进行少量代表性招聘站点验证。

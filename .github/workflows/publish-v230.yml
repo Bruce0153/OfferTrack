@@ -1,0 +1,40 @@
+name: OfferTrack v2.3.0 publish
+
+on:
+  push:
+    branches: [v2]
+    paths:
+      - tools/v230-ready.txt
+
+permissions:
+  contents: write
+
+jobs:
+  publish-v230:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply v2.3 patches
+        run: |
+          git apply tools/v230-core.patch
+          git apply tools/v230-ui.patch
+          git apply tools/v230-docs-tests.patch
+      - name: Syntax and regression tests
+        run: |
+          for f in *.js; do node --check "$f"; done
+          for t in tests/*.test.js; do node "$t"; done
+          python -m json.tool manifest.json >/dev/null
+      - name: Commit v2.3.0
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f tools/v230-core.patch tools/v230-ui.patch tools/v230-docs-tests.patch tools/v230-ready.txt .github/workflows/publish-v230.yml
+          git add -A
+          git commit -m "feat(v2.3): add session health manager and cooldown recovery"
+          git push origin v2

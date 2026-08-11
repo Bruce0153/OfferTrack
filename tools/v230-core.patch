@@ -1,0 +1,210 @@
+diff --git a/followup-background.js b/followup-background.js
+index 79ac1c9..55039e0 100644
+--- a/followup-background.js
++++ b/followup-background.js
+@@ -5,6 +5,7 @@
+   const Providers = globalThis.OfferTrackProviderRegistry;
+   const ApplicationData = globalThis.OfferTrackApplicationData;
+   const Strategy = globalThis.OfferTrackFollowUpStrategy;
++  const Sessions = globalThis.OfferTrackSessionManager;
+   const ALARM = 'offertrack-follow-up';
+   const LEASE_MS = 20 * 60 * 1000;
+   const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
+@@ -18,6 +19,7 @@
+       followUpMaxSitesPerRun: Math.min(30, Math.max(1, Number(input.followUpMaxSitesPerRun || 12))),
+       followUpIncludeTerminal: !!input.followUpIncludeTerminal,
+       followUpNotify: input.followUpNotify !== false,
++      followUpNotifySessionIssues: input.followUpNotifySessionIssues !== false,
+       followUpApiFirst: input.followUpApiFirst !== false,
+       followUpStructuredState: input.followUpStructuredState !== false,
+       followUpApiTimeoutSeconds: Math.min(15, Math.max(3, Number(input.followUpApiTimeoutSeconds || 6))),
+@@ -126,27 +128,37 @@
+       totalRecords: targets.length, totalSites: allGroups.length, scheduledSites: groups.length,
+       providers: Providers?.summarize ? Providers.summarize(allGroups) : [],
+       strategyStats: {},
+-      checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, details: []
++      checked: 0, changed: 0, failed: 0, loginRequired: 0, sessionBlocked: 0, waiting: 0, unmatched: 0, details: [], sessionIssues: []
+     };
+ 
+     for (const group of groups) {
+-      const inspected = await inspectGroup(group, cfg).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
++      const inspected = await inspectGroup(group, cfg, source).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
+       if (inspected?.strategy) result.strategyStats[inspected.strategy] = (result.strategyStats[inspected.strategy] || 0) + 1;
++      const sessionEvent = Sessions?.record ? await Sessions.record(group, inspected, source).catch(() => null) : null;
++      if (sessionEvent?.issue) result.sessionIssues.push({ host: group.host, provider: group.providerName || group.provider?.name || '', state: sessionEvent.entry?.state || '', label: sessionEvent.entry?.label || '', reason: sessionEvent.entry?.reason || '', url: sessionEvent.entry?.lastUrl || group.url });
+       const patchResult = await applyGroupResult(settings, token, group, inspected);
+-      for (const k of ['checked','changed','failed','loginRequired','waiting','unmatched']) result[k] += patchResult[k] || 0;
++      for (const k of ['checked','changed','failed','loginRequired','sessionBlocked','waiting','unmatched']) result[k] += patchResult[k] || 0;
+       if (patchResult.detail) result.details.push(patchResult.detail);
+       await sleep(250);
+     }
+ 
+     if (allGroups.length > groups.length) result.details.push({ host: '', status: 'limited', message: `本轮按设置只检查前 ${groups.length}/${allGroups.length} 个招聘网站` });
+-    result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，失败 ${result.failed}`;
++    result.sessionHealth = Sessions?.state ? (await Sessions.state().catch(() => null))?.summary || null : null;
++    result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，需验证/受限 ${result.sessionBlocked}，失败 ${result.failed}`;
+     await chrome.storage.local.set({ lastFollowUp: result });
+     if (cfg.followUpNotify && result.changed > 0) await notifyChanges(result);
++    if (cfg.followUpNotifySessionIssues && result.sessionIssues.length) await notifySessionIssues(result);
+     await configure(settings);
+     return result;
+   }
+ 
+-  async function inspectGroup(group, cfg) {
++  async function inspectGroup(group, cfg, source = 'manual') {
++    let tab = await findBestOpenTab(group);
++    const sessionDecision = Sessions?.shouldSkip ? await Sessions.shouldSkip(group, { source, hasOpenTab: !!tab }).catch(() => ({ skip: false })) : { skip: false };
++    if (sessionDecision?.skip) {
++      return { host: group.host, provider: group.provider, status: 'session_paused', sessionState: sessionDecision.state, error: `${sessionDecision.label || '会话异常'}，已暂停自动重试至 ${formatLocalTime(sessionDecision.cooldownUntil)}`, records: [], page: { url: group.url } };
++    }
++
+     // 1) 若之前已经学到过“安全、无敏感参数、且成功返回投递数据”的 GET API，先尝试无页面检查。
+     if (cfg.followUpApiFirst && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
+       const cached = await loadApiHints(group);
+@@ -156,7 +168,6 @@
+       }
+     }
+ 
+-    let tab = await findBestOpenTab(group);
+     let createdTab = false;
+     if (!tab && cfg.followUpMode === 'background_tabs') {
+       tab = await chrome.tabs.create({ url: group.url, active: false });
+@@ -172,6 +183,11 @@
+         return { host: group.host, provider: group.provider, status: 'login', error: '招聘网站登录状态已失效', records: [], page: { url: finalUrl } };
+       }
+ 
++      const earlyProbe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
++      if (earlyProbe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', error: earlyProbe.reason || '招聘网站要求重新登录', records: [], page: { url: finalUrl } };
++      if (earlyProbe?.rateLimited) return { host: group.host, provider: group.provider, status: 'rate_limited', error: earlyProbe.reason || '招聘网站暂时限制访问', records: [], page: { url: finalUrl } };
++      if (earlyProbe?.challenge) return { host: group.host, provider: group.provider, status: 'challenge', error: earlyProbe.reason || '招聘网站要求安全验证', records: [], page: { url: finalUrl } };
++
+       // 2) 先只收集“只读探针”：页面 JSON script + Resource Timing URL，不执行页面代码、不读取 Cookie。
+       const strategyProbe = await collectStrategyProbe(tab.id);
+ 
+@@ -213,8 +229,9 @@
+       const records = Array.isArray(scan.records) ? scan.records : [];
+       if (!records.length) {
+         const probe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
+-        if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', strategy: 'page_scan', error: '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
+-        if (probe?.blocked) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: '页面出现验证码或访问限制', records: [], page: scan.page || { url: finalUrl } };
++        if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', strategy: 'page_scan', error: probe.reason || '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
++        if (probe?.rateLimited) return { host: group.host, provider: group.provider, status: 'rate_limited', strategy: 'page_scan', error: probe.reason || '页面提示访问频繁或受限', records: [], page: scan.page || { url: finalUrl } };
++        if (probe?.challenge) return { host: group.host, provider: group.provider, status: 'challenge', strategy: 'page_scan', error: probe.reason || '页面要求安全验证', records: [], page: scan.page || { url: finalUrl } };
+         return { host: group.host, provider: group.provider, status: 'empty', strategy: 'page_scan', error: '页面已打开，但没有解析到投递记录', records: [], page: scan.page || { url: finalUrl } };
+       }
+       return { host: group.host, provider: group.provider, status: 'ok', strategy: 'page_scan', records, page: scan.page || { url: finalUrl } };
+@@ -401,10 +418,15 @@
+   async function applyGroupResult(settings, token, group, inspected) {
+     const now = new Date().toLocaleString('zh-CN', { hour12: false });
+     const patches = [];
+-    const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, detail: null };
++    const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, sessionBlocked: 0, waiting: 0, unmatched: 0, detail: null };
+     const common = { '最后检查时间': now, '招聘系统': group.providerName || group.provider?.name || 'Generic Web', '检查方式': inspected?.strategy ? (Strategy?.strategyLabel ? Strategy.strategyLabel(inspected.strategy) : inspected.strategy) : '' };
+ 
+-    if (inspected.status === 'waiting') {
++    if (inspected.status === 'session_paused') {
++      const loginText = inspected.sessionState === 'login_required' ? '已失效' : inspected.sessionState === 'challenge' ? '需验证' : inspected.sessionState === 'rate_limited' ? '访问受限' : '未知';
++      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '会话暂停', '登录状态': loginText, '最近错误': safeCell(inspected.error || '', 500) } });
++      summary.waiting = group.records.length;
++      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'session_paused', message: inspected.error };
++    } else if (inspected.status === 'waiting') {
+       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '等待打开招聘网站', '登录状态': '未知', '最近错误': inspected.error || '' } });
+       summary.waiting = group.records.length;
+       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'waiting', message: inspected.error };
+@@ -412,6 +434,12 @@
+       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '需要登录', '登录状态': '已失效', '最近错误': inspected.error || '' } });
+       summary.loginRequired = group.records.length;
+       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'login', message: inspected.error };
++    } else if (inspected.status === 'challenge' || inspected.status === 'rate_limited') {
++      const loginText = inspected.status === 'challenge' ? '需验证' : '访问受限';
++      const checkText = inspected.status === 'challenge' ? '需要安全验证' : '访问暂时受限';
++      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': checkText, '登录状态': loginText, '最近错误': safeCell(inspected.error || '', 500) } });
++      summary.sessionBlocked = group.records.length;
++      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: inspected.status, message: inspected.error };
+     } else if (inspected.status === 'error') {
+       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '检查失败', '登录状态': '未知', '最近错误': safeCell(inspected.error, 500) } });
+       summary.failed = group.records.length;
+@@ -459,6 +487,22 @@
+     return summary;
+   }
+ 
++  function formatLocalTime(ts) {
++    if (!ts) return '稍后';
++    try { return new Date(Number(ts)).toLocaleString('zh-CN', { hour12: false }); }
++    catch { return '稍后'; }
++  }
++
++  async function notifySessionIssues(result) {
++    if (!chrome.notifications || !result?.sessionIssues?.length) return;
++    const issues = result.sessionIssues.slice(0, 3);
++    const message = issues.map(x => `${x.host}：${x.label || '会话异常'}${x.reason ? `（${x.reason}）` : ''}`).join('\n');
++    await chrome.notifications.create(`offertrack-session-${Date.now()}`, {
++      type: 'basic', iconUrl: 'icons/icon128.png', title: `OfferTrack：${result.sessionIssues.length} 个招聘网站需要处理`, message,
++      contextMessage: '重新登录或完成验证后，可手动立即跟进以恢复自动检查'
++    }).catch(() => {});
++  }
++
+   async function notifyChanges(result) {
+     if (!chrome.notifications || !result?.changed) return;
+     const changes = result.details.flatMap(d => d?.changes || []).slice(0, 3);
+diff --git a/followup-probe.js b/followup-probe.js
+index 4ae9ab9..ad081b7 100644
+--- a/followup-probe.js
++++ b/followup-probe.js
+@@ -1,12 +1,22 @@
+ (() => {
+   'use strict';
+   const compact = v => String(v || '').replace(/[\t\r\n\u00a0]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
++
++  function classify() {
++    const body = compact(document.body?.innerText || '').slice(0, 9000);
++    const href = location.href;
++    const loginRequired = /(手机号登录|验证码登录|扫码登录|账号登录|密码登录|请先登录|登录后查看|重新登录|立即登录|登录\/注册)/i.test(body)
++      || /\/(?:login|signin|sign-in)(?:[/?#]|$)|(?:login|signin)=/i.test(href);
++    const rateLimited = /(访问过于频繁|操作过于频繁|请求过于频繁|访问频繁|请求频繁|稍后再试|访问受限|请求异常|异常流量|too\s+many\s+requests|rate\s*limit)/i.test(body);
++    const challenge = !loginRequired && !rateLimited && /(安全验证|人机验证|滑块验证|机器人验证|行为验证|完成验证|请完成验证|拖动滑块|验证您是真人|验证身份)/i.test(body);
++    const state = loginRequired ? 'login_required' : rateLimited ? 'rate_limited' : challenge ? 'challenge' : 'unknown';
++    const reason = loginRequired ? '页面要求重新登录' : rateLimited ? '页面提示访问频繁或受限' : challenge ? '页面要求安全/人机验证' : '';
++    return { body, loginRequired, rateLimited, challenge, blocked: challenge || rateLimited, state, reason };
++  }
++
+   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+     if (msg?.type !== 'PROBE_PAGE') return;
+-    const body = compact(document.body?.innerText || '').slice(0, 12000);
+-    const loginRequired = /(手机号登录|验证码登录|扫码登录|账号登录|密码登录|请先登录|登录后查看|重新登录|立即登录|登录\/注册)/i.test(body)
+-      || /\/(?:login|signin|sign-in)(?:[/?#]|$)/i.test(location.href);
+-    const blocked = /(访问过于频繁|操作过于频繁|安全验证|人机验证|滑块验证|验证码|请求异常|访问受限|机器人验证)/i.test(body);
+-    sendResponse({ ok: true, loginRequired, blocked, title: document.title, url: location.href });
++    const r = classify();
++    sendResponse({ ok: true, loginRequired: r.loginRequired, rateLimited: r.rateLimited, challenge: r.challenge, blocked: r.blocked, sessionState: r.state, reason: r.reason, title: document.title, url: location.href });
+   });
+ })();
+diff --git a/manifest.json b/manifest.json
+index 6a1cbda..404435b 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -1,8 +1,8 @@
+ {
+   "manifest_version": 3,
+   "name": "OfferTrack - 秋招投递助手",
+-  "version": "2.2.1",
+-  "description": "自动识别并同步招聘投递记录；提供轻量页面解析、Provider Registry 与 API/Structured State/Page Scan 三级自动跟进。",
++  "version": "2.3.0",
++  "description": "自动识别并同步招聘投递记录；支持招聘网站会话健康管理、熔断恢复、Provider Registry 与三级自动跟进。",
+   "permissions": [
+     "storage",
+     "activeTab",
+@@ -50,5 +50,5 @@
+       "run_at": "document_idle"
+     }
+   ],
+-  "version_name": "2.2.1"
++  "version_name": "2.3.0"
+ }
+diff --git a/service-worker.js b/service-worker.js
+index 3af32e3..eea9b5e 100644
+--- a/service-worker.js
++++ b/service-worker.js
+@@ -1 +1 @@
+-importScripts('background.js', 'followup-core.js', 'provider-registry.js', 'application-data.js', 'followup-strategy.js', 'followup-background.js');
++importScripts('background.js', 'followup-core.js', 'provider-registry.js', 'application-data.js', 'followup-strategy.js', 'session-manager.js', 'followup-background.js');

@@ -1,0 +1,23 @@
+const fs=require('fs'),vm=require('vm'),path=require('path'),assert=require('assert');
+const fieldNames=['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','下一步行动','面试时间','优先级','备注','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
+const rows=[{record_id:'r1',fields:{'公司':'测试公司','岗位名称':'大模型算法工程师','当前状态':'筛选中','招聘平台':'jobs.example.com','岗位链接':'https://jobs.example.com/applications','唯一记录ID':'u1'}}];
+const store={settings:{appId:'a',appSecret:'s',appToken:'app',tableId:'tbl',followUpEnabled:true,followUpIntervalHours:6,followUpMode:'background_tabs',followUpMaxSitesPerRun:12,followUpIncludeTerminal:false,followUpNotify:false,followUpNotifySessionIssues:false,followUpApiFirst:false,followUpStructuredState:false,followUpTabTimeoutSeconds:2,customSites:{},companyAliases:{},trustedAutoSyncHosts:[]}};
+const listeners={},alarms=new Map(),created=[],removed=[],updates=[]; let loggedIn=false;
+const event=n=>({addListener(fn){(listeners[n] ||= []).push(fn);}});
+const chrome={runtime:{onInstalled:event('i'),onStartup:event('s'),onMessage:event('m'),openOptionsPage:async()=>{}},storage:{local:{get:async ks=>Array.isArray(ks)?Object.fromEntries(ks.map(k=>[k,store[k]])):{[ks]:store[ks]},set:async o=>Object.assign(store,o),setAccessLevel:async()=>{}},onChanged:event('c')},alarms:{onAlarm:event('a'),create:async(n,i)=>alarms.set(n,{name:n,periodInMinutes:i.periodInMinutes,scheduledTime:Date.now()+i.delayInMinutes*60000}),get:async n=>alarms.get(n),clear:async n=>alarms.delete(n)},tabs:{query:async()=>[],create:async o=>{created.push(o);return{id:90,url:o.url,status:'complete'}},get:async()=>({id:90,url:loggedIn?'https://jobs.example.com/applications':'https://jobs.example.com/login',status:'complete'}),remove:async id=>removed.push(id),sendMessage:async(id,msg)=>{if(msg.type==='PROBE_PAGE')return loggedIn?{ok:true,loginRequired:false,challenge:false,rateLimited:false}:{ok:true,loginRequired:true,reason:'页面要求重新登录'};if(msg.type==='SCAN_PAGE')return loggedIn?{ok:true,detected:true,page:{url:'https://jobs.example.com/applications'},records:[{company:'测试公司',position:'大模型算法工程师',status:'面试中',rawStatus:'面试中',platform:'jobs.example.com',url:'https://jobs.example.com/applications'}]}:{ok:true,detected:false,records:[]};return{ok:false};}},notifications:{create:async()=>''}};
+const response=j=>({ok:true,status:200,statusText:'OK',json:async()=>j}); async function fetchMock(url,opt={}){url=String(url);if(url.includes('/auth/'))return response({code:0,tenant_access_token:'t',expire:7200});if(url.includes('/fields?'))return response({code:0,data:{items:fieldNames.map((n,i)=>({field_name:n,field_id:'f'+i,type:1,is_primary:i===0})),has_more:false}});if(url.includes('/records?'))return response({code:0,data:{items:rows,has_more:false}});if(url.includes('/batch_update')){updates.push(JSON.parse(opt.body));return response({code:0,data:{records:[]}})}throw Error(url)}
+const ctx={console,chrome,fetch:fetchMock,URL,URLSearchParams,setTimeout,clearTimeout,globalThis:null};ctx.globalThis=ctx;ctx.importScripts=()=>{};vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'..','background.js'),'utf8'),ctx);ctx.OfferTrackFollowUpCore=require(path.join(__dirname,'..','followup-core.js'));ctx.OfferTrackProviderRegistry=require(path.join(__dirname,'..','provider-registry.js'));vm.runInContext(fs.readFileSync(path.join(__dirname,'..','session-manager.js'),'utf8'),ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'..','followup-background.js'),'utf8'),ctx);
+(async()=>{
+  const first=await ctx.OfferTrackFollowUp._execute('alarm');
+  assert.equal(first.loginRequired,1); assert.equal(created.length,1);
+  assert(store.followUpSessionHealth['jobs.example.com'].state==='login_required');
+  const second=await ctx.OfferTrackFollowUp._execute('alarm');
+  assert.equal(created.length,1,'cooldown should prevent reopening background tab');
+  assert(second.waiting>=1);
+  loggedIn=true;
+  const third=await ctx.OfferTrackFollowUp._execute('manual');
+  assert.equal(created.length,2,'manual run bypasses cooldown and rechecks');
+  assert.equal(third.changed,1);
+  assert.equal(store.followUpSessionHealth['jobs.example.com'].state,'healthy');
+  console.log('Session cooldown -> manual recovery E2E: PASS');
+})().catch(e=>{console.error(e);process.exit(1)});

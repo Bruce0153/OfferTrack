@@ -37,7 +37,9 @@ jobs:
               p = payload_dir / name
               if not p.exists():
                   raise SystemExit(f'missing payload chunk: {name}')
-              return p.read_text(encoding='ascii').strip()
+              # Payload files were transported through text commits and may contain
+              # harmless line wrapping. Normalize ASCII whitespace before decoding.
+              return ''.join(p.read_text(encoding='ascii').split())
 
           parts = [read('00.txt')]
           if (payload_dir / '01a.txt').exists() and (payload_dir / '01b.txt').exists():
@@ -54,7 +56,8 @@ jobs:
           parts.append(chunk12)
           parts.append(read('13.txt'))
 
-          payload = base64.b64decode(''.join(parts), validate=True)
+          encoded = ''.join(parts)
+          payload = base64.b64decode(encoded, validate=True)
           with zipfile.ZipFile(io.BytesIO(payload)) as z:
               bad = z.testzip()
               if bad:

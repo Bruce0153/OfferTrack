@@ -1,0 +1,54 @@
+name: OfferTrack v2.4.0 final publish
+
+on:
+  push:
+    branches: [v2]
+    paths:
+      - '.github/workflows/publish-v240-final.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish-v240:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply exact tested v2.4 payload
+        run: python tools/apply-v240b.py
+      - name: Syntax checks
+        run: |
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+      - name: Full regression suite
+        run: |
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+      - name: v2.4 safety invariants
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const m=JSON.parse(fs.readFileSync('manifest.json','utf8'));
+          if(m.version!=='2.4.0') throw new Error('version mismatch');
+          if(!(m.permissions||[]).includes('cookies')) throw new Error('cookies permission missing');
+          const prod=fs.readdirSync('.').filter(x=>x.endsWith('.js')).map(x=>fs.readFileSync(x,'utf8')).join('\n');
+          if(/setInterval\s*\(/.test(prod)) throw new Error('setInterval forbidden in production');
+          if(/characterData\s*:\s*true/.test(prod)) throw new Error('characterData observer forbidden');
+          const cookie=fs.readFileSync('cookie-session.js','utf8');
+          if(/storage\.local\.set/.test(cookie)||/console\.log/.test(cookie)) throw new Error('cookie privacy boundary violated');
+          for(const f of ['PROVIDER_REGISTRY.md','SESSION_MANAGER.md','TEST_REPORT.md','V2_ROADMAP.md','INSTALL_EDGE.bat']) if(fs.existsSync(f)) throw new Error('obsolete file remains: '+f);
+          console.log('v2.4 safety invariants PASS');
+          NODE
+      - name: Commit v2.4.0
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -r tools/v240-payload tools/apply-v240.py tools/apply-v240b.py .github/workflows/publish-v240.yml .github/workflows/publish-v240-final.yml
+          git add -A
+          git commit -m "feat(v2.4): add cookie-aware sessions and unified company identity resolver"
+          git push origin v2

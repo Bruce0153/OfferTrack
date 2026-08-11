@@ -183,7 +183,7 @@
         return { host: group.host, provider: group.provider, status: 'login', error: '招聘网站登录状态已失效', records: [], page: { url: finalUrl } };
       }
 
-      const earlyProbe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
+      const earlyProbe = await sendTabMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
       if (earlyProbe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', error: earlyProbe.reason || '招聘网站要求重新登录', records: [], page: { url: finalUrl } };
       if (earlyProbe?.rateLimited) return { host: group.host, provider: group.provider, status: 'rate_limited', error: earlyProbe.reason || '招聘网站暂时限制访问', records: [], page: { url: finalUrl } };
       if (earlyProbe?.challenge) return { host: group.host, provider: group.provider, status: 'challenge', error: earlyProbe.reason || '招聘网站要求安全验证', records: [], page: { url: finalUrl } };
@@ -228,7 +228,7 @@
       if (!scan?.ok) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
       const records = Array.isArray(scan.records) ? scan.records : [];
       if (!records.length) {
-        const probe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
+        const probe = await sendTabMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
         if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', strategy: 'page_scan', error: probe.reason || '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
         if (probe?.rateLimited) return { host: group.host, provider: group.provider, status: 'rate_limited', strategy: 'page_scan', error: probe.reason || '页面提示访问频繁或受限', records: [], page: scan.page || { url: finalUrl } };
         if (probe?.challenge) return { host: group.host, provider: group.provider, status: 'challenge', strategy: 'page_scan', error: probe.reason || '页面要求安全验证', records: [], page: scan.page || { url: finalUrl } };
@@ -249,6 +249,33 @@
       platform: r.platform || fallbackPlatform,
       url: r.url || pageUrl || group.url
     }));
+  }
+
+  function isMissingReceiverError(err) {
+    return /Receiving end does not exist|Could not establish connection|message port closed/i.test(err?.message || String(err || ''));
+  }
+
+  async function injectPageBridge(tabId) {
+    if (!chrome.scripting?.executeScript) throw new Error('当前浏览器无法恢复页面解析器');
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+      world: 'ISOLATED'
+    });
+    if (chrome.scripting?.insertCSS) {
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ['content.css'] }).catch(() => {});
+    }
+  }
+
+  async function sendTabMessage(tabId, message) {
+    try {
+      return await chrome.tabs.sendMessage(tabId, message);
+    } catch (e) {
+      if (!isMissingReceiverError(e)) throw e;
+      await injectPageBridge(tabId);
+      await sleep(120);
+      return chrome.tabs.sendMessage(tabId, message);
+    }
   }
 
   async function collectStrategyProbe(tabId) {
@@ -404,7 +431,7 @@
     let last = null;
     for (let i = 0; i < attempts; i++) {
       try {
-        last = await chrome.tabs.sendMessage(tabId, { type: 'SCAN_PAGE' });
+        last = await sendTabMessage(tabId, { type: 'SCAN_PAGE' });
         if (last?.ok && last.records?.length) return last;
         if (last?.ok && last.detected && !requireRecords) return last;
       } catch (e) {

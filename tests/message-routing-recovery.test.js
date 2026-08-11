@@ -1,0 +1,15 @@
+const fs = require('fs');
+const path = require('path');
+const assert = require('assert');
+const root = path.join(__dirname, '..');
+const bg = fs.readFileSync(path.join(root, 'background.js'), 'utf8');
+const popup = fs.readFileSync(path.join(root, 'popup.js'), 'utf8');
+const follow = fs.readFileSync(path.join(root, 'followup-background.js'), 'utf8');
+const content = fs.readFileSync(path.join(root, 'content.js'), 'utf8');
+assert(bg.includes('BACKGROUND_MESSAGE_TYPES'));
+assert(!bg.includes("error: 'unknown_message'"));
+assert(popup.includes('ensurePageBridge') && popup.includes('sendPageMessage'));
+assert(follow.includes('injectPageBridge') && follow.includes('sendTabMessage'));
+assert(content.includes('COMPANY_NOISE_RE') && content.includes('COMPANY_KEY_RE') && content.includes('APP_ROUTE_RE'));
+assert(content.includes('runtime-json') && content.includes('data-company-name'));
+console.log('message routing and generic recovery PASS');

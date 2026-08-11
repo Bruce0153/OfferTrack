@@ -40,9 +40,20 @@
     if (/(投递|申请|应聘|岗位|职位|个人中心|候选人|详情|收藏|流程)/.test(s)) return '';
     if (STRONG_ROLE_RE.test(s) && s.length > 24) return '';
 
-    const bilingual = s.match(/^(?:[A-Za-z][A-Za-z0-9.&+\-]{1,24}\s+)([\u4e00-\u9fff]{2,8})$/);
-    if (bilingual) s = bilingual[1];
     return s.slice(0, 80);
+  }
+
+  function companyCandidateVariants(value) {
+    const base = normalizeCompany(value);
+    if (!base) return [];
+    const out = [{ value: base, penalty: 0 }];
+    const bilingual = base.match(/^([A-Za-z][A-Za-z0-9.&+\-]{1,28})\s+([\u4e00-\u9fff]{2,10})$/);
+    if (bilingual) {
+      out.push({ value: bilingual[2], penalty: -1.5 });
+      out.push({ value: bilingual[1], penalty: -2.5 });
+    }
+    const seen = new Set();
+    return out.filter(x => x.value && !seen.has(x.value.toLowerCase()) && seen.add(x.value.toLowerCase()));
   }
 
   function normalizePosition(value) {
@@ -110,12 +121,14 @@
     const positionSeen = new Set();
 
     const addCompany = (value, source, context = '') => {
-      const cleaned = normalizeCompany(value);
-      if (!cleaned) return;
-      const sig = cleaned.toLowerCase();
-      if (companySeen.has(sig) || COMPANY_CONTEXT_BAD_RE.test(context || '')) return;
-      companySeen.add(sig);
-      companies.push({ value: cleaned, source, context, score: companyScore(cleaned, source, context) });
+      if (COMPANY_CONTEXT_BAD_RE.test(context || '')) return;
+      for (const variant of companyCandidateVariants(value)) {
+        const cleaned = variant.value;
+        const sig = cleaned.toLowerCase();
+        if (companySeen.has(sig)) continue;
+        companySeen.add(sig);
+        companies.push({ value: cleaned, source, context, score: companyScore(cleaned, source, context) + Number(variant.penalty || 0) });
+      }
     };
     const addPosition = (value, source, context = '') => {
       const cleaned = normalizePosition(value);
@@ -131,6 +144,15 @@
     collectDeclaredDom(addCompany, addPosition);
     collectVisibleBrand(addCompany);
     collectVisiblePositions(addPosition);
+
+    for (const c of companies) {
+      if (!/(header|brand|meta)/.test(c.source || '')) continue;
+      for (const other of companies) {
+        if (c === other || !/(structured|runtime|declared|meta)/.test(other.source || '')) continue;
+        const affinity = companyAffinity(c.value, other.value);
+        if (affinity >= 2) c.score += Math.min(4, affinity * 1.1);
+      }
+    }
 
     companies.sort((a, b) => b.score - a.score || a.value.length - b.value.length);
     positions.sort((a, b) => b.score - a.score || a.value.length - b.value.length);

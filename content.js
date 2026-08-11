@@ -1,6 +1,7 @@
 (() => {
   const APP_PAGE_RE = /(我的投递|投递记录|应聘记录|申请记录|我的申请|应聘进度|求职进度|招聘进度|候选人中心|网申投递|申请进度)/i;
   const APP_URL_RE = /(mydeliver|mydelivery|myapply|my-apply|application|applications|applyrecord|delivery|deliveries|candidate.*(?:apply|deliver)|process|progress|applicationcenter|jobapply)/i;
+  const APP_ROUTE_RE = /\/(?:account|personal|candidate|user|profile)\/(?:apply|application|applications|delivery|deliveries|record|records)(?:[/?#]|$)/i;
 
   // “明确状态”与“流程阶段”分开。流程阶段本身不一定代表当前状态。
   const DIRECT_STATUS_RE = /(已投递|投递成功|已申请|申请成功|待筛选|筛选中|评估中|待评估|待测评|测评中|测评完成|待笔试|笔试中|笔试完成|待面试|面试中|面试安排|一面|二面|三面|四面|HR面|终面|已发offer|offer已发放|已录用|录用|意向书|不合适|不通过|未通过|流程结束|已结束|已拒绝|拒绝|淘汰|已撤回|撤回成功|已终止|终止|待处理|处理中|流程中)/i;
@@ -26,6 +27,9 @@
   const CITY_RE = /(北京|上海|深圳|广州|杭州|南京|苏州|成都|武汉|西安|天津|重庆|长沙|合肥|厦门|福州|青岛|济南|郑州|宁波|无锡|珠海|东莞|佛山|大连|沈阳|长春|哈尔滨|石家庄|太原|南昌|南宁|昆明|贵阳|海口|香港|澳门|台北|东京|大阪|新加坡|远程)/g;
 
   const GENERIC_COMPANY_RE = /^(logo|icon|brand|home|记录|投递记录|网申投递|官网投递|申请记录|我的投递|我的申请|候选人中心|个人中心|校园招聘|社会招聘|应届招聘|实习招聘|招聘|职位|岗位|职位列表|岗位列表|首页|菜单|更多|详情|求职|应届|应届生|校招|社招|实习|校园|社会|春招|秋招|career|careers|jobs?)$/i;
+  const COMPANY_NOISE_RE = /^(?:相关公司|关联公司|推荐公司|相似公司|其他公司|更多公司|热门公司|合作公司|所属公司|招聘公司|目标公司|公司信息|公司介绍|企业信息|企业介绍|雇主信息|关于我们|合作伙伴|推荐企业|关联企业|相关企业)[：:]?$/i;
+  const COMPANY_CONTEXT_BAD_RE = /(related|recommend|similar|other|partner|supplier|customer|competitor|affiliate|suggest|history|hot|search|list|关联|相关|推荐|相似|其他|合作|供应商|客户|竞品|搜索|列表)/i;
+  const COMPANY_KEY_RE = /^(?:company(?:name|shortname|fullname|displayname)?|company_name|company_short_name|company_full_name|corp(?:name|shortname|fullname)?|corp_name|enterprise(?:name|shortname|fullname)?|employer(?:name|shortname|fullname)?|organization(?:name|shortname|fullname)?|organisation(?:name|shortname|fullname)?|orgname|org_name|brandname|brand_name|tenantname|tenant_name|sitename|site_name|publisher)$/i;
   const COMPANY_CONTEXT_NOISE_RE = /(?:板块|事业群|事业部|业务部|部门|中心|职类|类别|序列|方向|项目)$/i;
   const COHORT_RE = /^(?:20\d{2}|\d{2})届(?:应届生?)?(?:校园招聘|校招|招聘)?$|^(?:应届|应届生|校招|社招|实习|春招|秋招)$/i;
   const POSITION_NOISE_RE = /(?:第\s*\d+\s*志愿|第[一二三四五六七八九十]+志愿|官网投递|网申投递|校园投递|社会招聘|校招投递|社招投递|投递渠道|申请渠道)/ig;
@@ -56,6 +60,8 @@
   let runtimeConfigCache = null;
   let runtimeConfigAt = 0;
   const AUTO_SCAN_MIN_GAP = 4000;
+
+  document.getElementById('offertrack-badge')?.remove();
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     (async () => {
@@ -99,7 +105,7 @@
 
   function routeLooksRelevant() {
     const routeText = `${document.title} ${decodeSafe(location.href)}`;
-    return APP_PAGE_RE.test(routeText) || APP_URL_RE.test(routeText);
+    return APP_PAGE_RE.test(routeText) || APP_URL_RE.test(routeText) || APP_ROUTE_RE.test(location.pathname + location.search + location.hash);
   }
 
   function isOfferTrackNode(node) {
@@ -158,7 +164,7 @@
     const cfg = await getRuntimeConfig();
     if (cfg.enabled === false) return { detected: false, records: [], rejectedCount: 0, page: pageMeta() };
     const routeText = `${document.title} ${decodeSafe(location.href)}`;
-    const titleUrlSignal = APP_PAGE_RE.test(routeText) || APP_URL_RE.test(routeText);
+    const titleUrlSignal = APP_PAGE_RE.test(routeText) || APP_URL_RE.test(routeText) || APP_ROUTE_RE.test(location.pathname + location.search + location.hash);
     const bodyText = compactText(document.body?.innerText || '').slice(0, 30000);
     const textSignal = APP_PAGE_RE.test(bodyText.slice(0, 12000));
     const recordSignal = (FULL_DATE_RE.test(bodyText) || DIRECT_STATUS_RE.test(bodyText)) && POSITION_SIGNAL_RE.test(bodyText);
@@ -617,14 +623,14 @@
     const candidates = [];
     const sourceBase = {
       'brand': 9, 'top-left': 8, 'header': 7, 'structured-org': 7,
-      'structured-site': 6, 'meta': 5.5, 'title-part': 4, 'title': 3
+      'structured-site': 6, 'declared': 7.5, 'runtime-json': 7, 'meta': 5.5, 'title-part': 4, 'title': 3
     };
     const push = (text, source, bonus = 0) => {
       const rawText = cleanText(text || '');
       if (!rawText) return;
       const sloganPenalty = /^(?:欢迎(?:加入|来到)|加入(?:我们)?|诚邀加入)/.test(rawText) ? -4 : 0;
       for (const value of companyVariants(rawText)) {
-        if (!value || GENERIC_COMPANY_RE.test(value)) continue;
+        if (!value || GENERIC_COMPANY_RE.test(value) || COMPANY_NOISE_RE.test(value)) continue;
         candidates.push({ value, source, bonus: (sourceBase[source] || 0) + bonus + sloganPenalty });
       }
     };
@@ -637,6 +643,14 @@
     push(document.querySelector('meta[property="og:site_name"]')?.content, 'meta');
     push(document.querySelector('meta[name="application-name"]')?.content, 'meta');
     push(document.querySelector('meta[name="apple-mobile-web-app-title"]')?.content, 'meta');
+
+    const companyAttrs = ['data-company-name','data-company','data-corp-name','data-enterprise-name','data-employer-name','data-organization-name','data-org-name','data-brand-name','data-tenant-name','data-site-name'];
+    for (const el of [...document.querySelectorAll(companyAttrs.map(x => `[${x}]`).join(','))].slice(0, 120)) {
+      for (const attr of companyAttrs) {
+        const value = el.getAttribute?.(attr);
+        if (value) push(value, 'declared');
+      }
+    }
 
     const title = cleanText(document.title);
     push(title, 'title');
@@ -705,43 +719,61 @@
   function extractStructuredCompanyCandidates() {
     const out = [];
     const seen = new Set();
-    const add = (v, source, bonus = 0) => {
+    let nodes = 0;
+    const add = (v, source, bonus = 0, context = '') => {
       const t = cleanText(v || '');
-      if (!t || seen.has(`${source}|${t}`)) return;
-      seen.add(`${source}|${t}`);
+      if (!t || COMPANY_NOISE_RE.test(t) || COMPANY_CONTEXT_BAD_RE.test(context || '')) return;
+      const key = `${source}|${t}`;
+      if (seen.has(key)) return;
+      seen.add(key);
       out.push({ value: t, source, bonus });
     };
-    const visit = (value, depth = 0) => {
-      if (!value || depth > 7) return;
-      if (Array.isArray(value)) return value.slice(0, 80).forEach(x => visit(x, depth + 1));
-      if (typeof value !== 'object') return;
+    const visit = (value, depth = 0, path = [], visited = new WeakSet()) => {
+      if (!value || depth > 7 || nodes++ > 2400 || typeof value !== 'object') return;
+      if (visited.has(value)) return;
+      visited.add(value);
+      if (Array.isArray(value)) {
+        for (const x of value.slice(0, 60)) visit(x, depth + 1, path, visited);
+        return;
+      }
+      const pathText = path.join('.');
       const types = Array.isArray(value['@type']) ? value['@type'] : [value['@type']].filter(Boolean);
       const typeText = types.join(' ').toLowerCase();
       if (/(organization|corporation|localbusiness)/.test(typeText)) {
-        add(value.name, 'structured-org', 1.5);
-        add(value.alternateName, 'structured-org', 0.8);
+        add(value.name, 'structured-org', 1.5, `${pathText}.name`);
+        add(value.alternateName, 'structured-org', 0.8, `${pathText}.alternateName`);
       }
       if (/website/.test(typeText)) {
-        add(value.name, 'structured-site', 0.5);
-        add(value.alternateName, 'structured-site', 0.3);
+        add(value.name, 'structured-site', 0.5, `${pathText}.name`);
+        add(value.alternateName, 'structured-site', 0.3, `${pathText}.alternateName`);
       }
       if (/jobposting/.test(typeText)) {
         const org = value.hiringOrganization;
-        if (typeof org === 'string') add(org, 'structured-org', 2);
+        if (typeof org === 'string') add(org, 'structured-org', 2, `${pathText}.hiringOrganization`);
         else if (org && typeof org === 'object') {
-          add(org.name, 'structured-org', 2);
-          add(org.alternateName, 'structured-org', 1);
+          add(org.name, 'structured-org', 2, `${pathText}.hiringOrganization.name`);
+          add(org.alternateName, 'structured-org', 1, `${pathText}.hiringOrganization.alternateName`);
         }
       }
-      for (const [k, v] of Object.entries(value)) {
+      for (const [k, v] of Object.entries(value).slice(0, 180)) {
         if (k === '@context') continue;
-        if (v && typeof v === 'object') visit(v, depth + 1);
+        const nextPath = [...path, k];
+        const nextPathText = nextPath.join('.');
+        if ((typeof v === 'string' || typeof v === 'number') && COMPANY_KEY_RE.test(k)) {
+          add(String(v), 'runtime-json', 1.2, nextPathText);
+        } else if (v && typeof v === 'object' && !COMPANY_CONTEXT_BAD_RE.test(nextPathText)) {
+          visit(v, depth + 1, nextPath, visited);
+        }
       }
     };
-    for (const script of [...document.querySelectorAll('script[type="application/ld+json"]')].slice(0, 40)) {
+    let budget = 0;
+    const scripts = [...document.querySelectorAll('script[type="application/ld+json"],script[type="application/json"],script#__NEXT_DATA__,script#__NUXT_DATA__')].slice(0, 24);
+    for (const script of scripts) {
       const raw = script.textContent || '';
-      if (!raw || raw.length > 1_500_000) continue;
-      try { visit(JSON.parse(raw)); } catch {}
+      if (!raw || raw.length > 600_000) continue;
+      budget += raw.length;
+      if (budget > 900_000) break;
+      try { visit(JSON.parse(raw), 0, [script.id || script.type || 'json']); } catch {}
     }
     return out.slice(0, 120);
   }
@@ -753,7 +785,7 @@
     const out = [];
     for (let p of pieces) {
       p = cleanCompany(p);
-      if (!p || GENERIC_COMPANY_RE.test(p)) continue;
+      if (!p || GENERIC_COMPANY_RE.test(p) || COMPANY_NOISE_RE.test(p)) continue;
       if (/^(logo|icon|brand|image|img)$/i.test(p)) continue;
       if (!out.includes(p)) out.push(p);
     }
@@ -766,7 +798,7 @@
   }
 
   function companyCandidateScore(v) {
-    if (!v || GENERIC_COMPANY_RE.test(v)) return -20;
+    if (!v || GENERIC_COMPANY_RE.test(v) || COMPANY_NOISE_RE.test(v)) return -100;
     let s = 0;
     if (/^(?:欢迎(?:加入|来到)|加入(?:我们)?|诚邀加入)/.test(v) || /[！!]{1,}$/.test(v)) s -= 4;
     if (COHORT_RE.test(v)) return -20;
@@ -1161,7 +1193,7 @@
     // 统一去掉纯招聘渠道/活动后缀，但保留公司品牌主体。
     s = s.replace(/[·•|｜\-—–\s]*(?:(?:秋季|春季)?(?:校园招聘|校招官网|校招|社会招聘|社招官网|社招|应届招聘|实习招聘)|人才招聘|招聘官网|招聘平台|招聘中心|招聘网站|招聘主页|招聘)\s*$/i, '').trim();
     s = s.replace(/^[·•|｜\-—–\s]+|[·•|｜\-—–\s]+$/g, '');
-    if (GENERIC_COMPANY_RE.test(s) || COHORT_RE.test(s)) return '';
+    if (GENERIC_COMPANY_RE.test(s) || COMPANY_NOISE_RE.test(s) || COHORT_RE.test(s)) return '';
     if (/^[\d*+()\-\s]{4,}$/.test(s) || /\*{2,}/.test(s)) return '';
     if (COMPANY_CONTEXT_NOISE_RE.test(s) && !/(有限公司|集团|科技|网络|银行|证券|研究院|实验室|大学|股份|公司|汽车|机器人)/.test(s)) return '';
     if (/^(logo|icon|brand|image|img)$/i.test(s)) return '';

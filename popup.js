@@ -20,13 +20,40 @@ async function activeTab() {
   return tab;
 }
 
+function isMissingReceiverError(err) {
+  return /Receiving end does not exist|Could not establish connection|message port closed/i.test(err?.message || String(err || ''));
+}
+
+async function ensurePageBridge(tabId) {
+  if (!chrome.scripting?.executeScript) throw new Error('当前浏览器无法恢复页面解析器，请刷新招聘页面后重试');
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+    world: 'ISOLATED'
+  });
+  if (chrome.scripting?.insertCSS) {
+    await chrome.scripting.insertCSS({ target: { tabId }, files: ['content.css'] }).catch(() => {});
+  }
+}
+
+async function sendPageMessage(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (e) {
+    if (!isMissingReceiverError(e)) throw e;
+    await ensurePageBridge(tabId);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    return chrome.tabs.sendMessage(tabId, message);
+  }
+}
+
 async function scan() {
   setMessage('正在解析当前页面…');
   $('scan').disabled = true;
   try {
     const tab = await activeTab();
     if (!tab?.id || !/^https:/.test(tab.url || '')) throw new Error('请打开 HTTPS 招聘网站的“我的投递/投递记录”页面');
-    const res = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_PAGE' });
+    const res = await sendPageMessage(tab.id, { type: 'SCAN_PAGE' });
     if (!res?.ok) throw new Error(res?.error || '无法解析当前页面');
     currentRecords = Array.isArray(res.records) ? res.records : [];
     currentPage = res.page || {};

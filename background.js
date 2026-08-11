@@ -54,7 +54,13 @@ async function migrateSettings() {
   await chrome.storage.local.set({ settings: merged });
 }
 
+const BACKGROUND_MESSAGE_TYPES = new Set([
+  'SYNC_RECORDS', 'RESOLVE_FEISHU_URL', 'TEST_FEISHU', 'INIT_FIELDS',
+  'OPEN_OPTIONS', 'GET_STATE', 'GET_CONTENT_CONFIG', 'PAGE_SCAN_RESULT'
+]);
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!BACKGROUND_MESSAGE_TYPES.has(msg?.type)) return false;
   (async () => {
     try {
       switch (msg?.type) {
@@ -119,8 +125,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true });
           break;
         }
-        default:
-          sendResponse({ ok: false, error: 'unknown_message' });
       }
     } catch (err) {
       console.error('[OfferTrack]', err);

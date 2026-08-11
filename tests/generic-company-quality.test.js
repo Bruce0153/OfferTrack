@@ -1,0 +1,17 @@
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const assert = require('assert');
+const code = fs.readFileSync(path.join(__dirname, '..', 'semantic.js'), 'utf8');
+const scripts = [{ textContent: JSON.stringify({ candidate: { companyName: '星辰智造科技有限公司', positionName: '大模型算法工程师' }, relatedCompanies: [{ companyName: '旁观者科技有限公司' }] }), id: '__DATA__', type: 'application/json' }];
+const document = { title: '我的申请 - 招聘平台', scripts, body: { innerText: '' }, querySelector(sel) { if (sel === 'meta[property="og:site_name"]') return { content: '星辰智造招聘' }; return null; }, querySelectorAll(sel) { if (sel.includes('script[type="application/ld+json"]') || sel.includes('script[type="application/json"]')) return scripts; return []; } };
+const context = { console, URL, Date, JSON, Math, Set, Map, WeakSet, Array, Object, String, Number, RegExp, document, location: { href: 'https://jobs.example.test/account/apply/', hostname: 'jobs.example.test', pathname: '/account/apply/', search: '', hash: '' }, innerWidth: 1280, chrome: { runtime: { onMessage: { addListener() {} } } }, getComputedStyle() { return { display: 'block', visibility: 'visible', opacity: '1', fontSize: '16px' }; }, Element: function Element() {} };
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(code, context);
+const out = context.__offerTrackEnhanceRecords([{ company: '相关公司', position: '大模型算法工程师', status: '已投递', rawStatus: '投递成功', platform: 'example.test', url: context.location.href, applyTime: '2026-08-11' }]);
+assert.equal(out.length, 1);
+assert.equal(out[0].company, '星辰智造科技有限公司');
+const snap = context.__offerTrackSemanticSnapshot();
+assert(!snap.companies.some(x => /旁观者/.test(x.value)));
+console.log('generic company quality PASS');

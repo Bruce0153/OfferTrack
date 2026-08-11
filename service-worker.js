@@ -1,1 +1,15 @@
-importScripts('background.js', 'followup-core.js', 'provider-registry.js', 'application-data.js', 'followup-strategy.js', 'session-manager.js', 'followup-background.js');
+importScripts(
+  'background.js',
+  'followup-core.js',
+  'provider-registry.js',
+  'application-data.js',
+  'followup-strategy.js',
+  'session-manager.js',
+  'application-matcher.js',
+  'status-state-machine.js',
+  'change-journal.js',
+  'followup-queue.js',
+  'cookie-session.js',
+  'v25-orchestrator.js',
+  'followup-background.js'
+);

@@ -6,6 +6,7 @@
   'use strict';
 
   const POSITION_KEY_RE = /(position|job|post|vacancy|role).*(name|title)|^(positionName|positionTitle|jobName|jobTitle|postName|postTitle|roleName|vacancyName)$/i;
+  const POSITION_CONTAINER_KEY_RE = /^(position|job|post|vacancy|role)$/i;
   const STATUS_KEY_RE = /(apply|application|delivery|process|progress|candidate|resume)?.*(status|state|stage|result)|^(status|state|stage|result)$/i;
   const COMPANY_KEY_RE = /(company|corp|employer|organization|tenant|brand).*(name|title)|^(companyName|companyShortName|corpName|employerName|organizationName|brandName)$/i;
   const LOCATION_KEY_RE = /(work)?.*(location|city|place)|^(location|city|workLocation|workCity)$/i;
@@ -70,15 +71,15 @@
     const out = [];
     const seen = new WeakSet();
     function walk(v,path,depth) {
-      if (v == null || out.length >= 240) return;
+      if (v == null || out.length >= 120) return;
       if (typeof v !== 'object') { out.push({ path, key: path.split('.').pop() || '', value: v }); return; }
       if (seen.has(v)) return; seen.add(v);
       if (depth > maxDepth) return;
       if (Array.isArray(v)) {
-        for (let i=0;i<Math.min(v.length,20);i++) walk(v[i], `${path}[${i}]`, depth+1);
+        for (let i=0;i<Math.min(v.length,10);i++) walk(v[i], `${path}[${i}]`, depth+1);
         return;
       }
-      for (const [k,val] of Object.entries(v).slice(0,120)) {
+      for (const [k,val] of Object.entries(v).slice(0,60)) {
         const next = path ? `${path}.${k}` : k;
         if (val != null && typeof val === 'object') walk(val,next,depth+1);
         else out.push({ path: next, key: k, value: val });
@@ -125,6 +126,19 @@
     return best;
   }
 
+  function objectLooksRelevant(obj, path='') {
+    if (!obj || typeof obj !== 'object') return false;
+    if (APPLICATION_PATH_RE.test(path)) return true;
+    const keys = Object.keys(obj).slice(0, 80);
+    let hasPosition = false, hasStatus = false;
+    for (const key of keys) {
+      if (!hasPosition && (POSITION_KEY_RE.test(key) || POSITION_CONTAINER_KEY_RE.test(key))) hasPosition = true;
+      if (!hasStatus && STATUS_KEY_RE.test(key)) hasStatus = true;
+      if (hasPosition && hasStatus) return true;
+    }
+    return false;
+  }
+
   function recordFromObject(obj, path, targets) {
     const entries = shallowEntries(obj, path, 2);
     const position = bestPosition(entries, targets);
@@ -166,19 +180,21 @@
     const out = [];
     const seen = new WeakSet();
     let nodes = 0;
-    const maxNodes = Math.min(12000, Math.max(500, Number(options.maxNodes || 5000)));
-    const maxDepth = Math.min(12, Math.max(3, Number(options.maxDepth || 8)));
+    const maxNodes = Math.min(5000, Math.max(400, Number(options.maxNodes || 2500)));
+    const maxDepth = Math.min(10, Math.max(3, Number(options.maxDepth || 7)));
 
     function visit(v,path,depth) {
       if (v == null || nodes++ >= maxNodes || depth > maxDepth) return;
       if (typeof v !== 'object') return;
       if (seen.has(v)) return; seen.add(v);
-      const candidate = recordFromObject(v,path,targets);
-      if (candidate) out.push(candidate);
+      if (objectLooksRelevant(v, path)) {
+        const candidate = recordFromObject(v,path,targets);
+        if (candidate) out.push(candidate);
+      }
       if (Array.isArray(v)) {
-        for (let i=0;i<Math.min(v.length,250);i++) visit(v[i], `${path}[${i}]`, depth+1);
+        for (let i=0;i<Math.min(v.length,120);i++) visit(v[i], `${path}[${i}]`, depth+1);
       } else {
-        for (const [k,val] of Object.entries(v).slice(0,180)) {
+        for (const [k,val] of Object.entries(v).slice(0,100)) {
           if (val && typeof val === 'object') visit(val, path ? `${path}.${k}` : k, depth+1);
         }
       }

@@ -16,7 +16,7 @@
   const SENTENCE_HINT_RE = /(点击|查询|查看|跟进|管理|完善|修改|请|您|可在|用于|了解|获取|关注|操作|进入|跳转|暂存|记录)/;
   const STATUS_RE = /(已投递|投递成功|申请成功|筛选中|评估中|待测评|测评中|笔试中|待面试|面试中|已结束|未通过|不通过|淘汰|已录用|offer)/i;
 
-  const MAX_SCRIPT_CHARS = 3_000_000;
+  const MAX_SCRIPT_CHARS = 900_000;
   let cache = null;
   let cacheAt = 0;
   let cacheHref = '';
@@ -67,7 +67,6 @@
     if (s.length >= 5 && s.length <= 68) score += 2;
     if (/structured|json|runtime/.test(source)) score += 4;
     if (/dom-heading|dom-title/.test(source)) score += 3;
-    if (document.body?.innerText?.includes(s)) score += 2;
     const punct = (s.match(/[，。；！!？?：:]/g) || []).length;
     if (punct >= 2) score -= 9;
     if (SENTENCE_HINT_RE.test(s) && !STRONG_ROLE_RE.test(s)) score -= 12;
@@ -103,7 +102,7 @@
 
   function collectSemanticSnapshot(force = false) {
     const now = Date.now();
-    if (!force && cache && cacheHref === location.href && now - cacheAt < 2500) return cache;
+    if (!force && cache && cacheHref === location.href && now - cacheAt < 30000) return cache;
 
     const companies = [];
     const positions = [];
@@ -150,11 +149,11 @@
 
   function collectStructured(addCompany, addPosition) {
     const visit = (value, path = [], depth = 0, seen = new WeakSet()) => {
-      if (value == null || depth > 10 || typeof value !== 'object') return;
+      if (value == null || depth > 8 || typeof value !== 'object') return;
       if (seen.has(value)) return;
       seen.add(value);
       if (Array.isArray(value)) {
-        for (let i = 0; i < Math.min(value.length, 100); i++) visit(value[i], [...path, String(i)], depth + 1, seen);
+        for (let i = 0; i < Math.min(value.length, 60); i++) visit(value[i], [...path, String(i)], depth + 1, seen);
         return;
       }
       const pathText = path.join('.');
@@ -172,7 +171,7 @@
         addCompany(value.name, 'structured-organization', `${pathText}.name`);
         addCompany(value.alternateName, 'structured-organization', `${pathText}.alternateName`);
       }
-      for (const [key, val] of Object.entries(value).slice(0, 500)) {
+      for (const [key, val] of Object.entries(value).slice(0, 220)) {
         const normalizedKey = key.replace(/[-_\s]/g, '').toLowerCase();
         const nextPath = [...path, key];
         const nextPathText = nextPath.join('.');
@@ -184,9 +183,9 @@
       }
     };
 
-    for (const script of [...document.querySelectorAll('script[type="application/ld+json"], script[type="application/json"], script#__NEXT_DATA__, script#__NUXT_DATA__')].slice(0, 80)) {
+    for (const script of [...document.querySelectorAll('script[type="application/ld+json"], script[type="application/json"], script#__NEXT_DATA__, script#__NUXT_DATA__')].slice(0, 24)) {
       const raw = script.textContent || '';
-      if (!raw || raw.length > 1_800_000) continue;
+      if (!raw || raw.length > 600_000) continue;
       try { visit(JSON.parse(raw), [script.id || script.type || 'json']); } catch {}
     }
   }
@@ -198,20 +197,20 @@
     const positionRe = new RegExp(`["']?(${positionKeys})["']?\\s*[:=]\\s*["']([^"'\\n\\r]{3,160})["']`, 'gi');
 
     let budget = 0;
-    for (const script of [...document.scripts].filter(s => !s.src).slice(0, 140)) {
+    for (const script of [...document.scripts].filter(s => !s.src).slice(0, 60)) {
       const raw = script.textContent || '';
-      if (!raw || raw.length > 2_000_000) continue;
+      if (!raw || raw.length > 600_000) continue;
       budget += raw.length;
       if (budget > MAX_SCRIPT_CHARS) break;
       let m, hit = 0;
       companyRe.lastIndex = 0;
-      while ((m = companyRe.exec(raw)) && hit++ < 100) {
+      while ((m = companyRe.exec(raw)) && hit++ < 40) {
         const around = raw.slice(Math.max(0, m.index - 180), Math.min(raw.length, companyRe.lastIndex + 100));
         if (!COMPANY_CONTEXT_BAD_RE.test(around)) addCompany(unescapeJsString(m[2]), 'runtime-regex', m[1]);
       }
       hit = 0;
       positionRe.lastIndex = 0;
-      while ((m = positionRe.exec(raw)) && hit++ < 150) addPosition(unescapeJsString(m[2]), 'runtime-regex', m[1]);
+      while ((m = positionRe.exec(raw)) && hit++ < 60) addPosition(unescapeJsString(m[2]), 'runtime-regex', m[1]);
     }
   }
 
@@ -233,7 +232,9 @@
     const title = cleanText(document.title);
     for (const p of [title, ...title.split(/[-_|｜·—–]/)]) addCompany(p, 'meta-title', 'document.title');
 
-    for (const el of [...document.querySelectorAll('body *')].slice(0, 2200)) {
+    const brandNodes = document.querySelectorAll('body *');
+    for (let i = 0, n = Math.min(brandNodes.length, 900); i < n; i++) {
+      const el = brandNodes[i];
       if (!visible(el)) continue;
       const rect = safeRect(el);
       if (rect.top < -5 || rect.top > 125 || rect.left < -5 || rect.left > Math.min(650, innerWidth * .48)) continue;
@@ -256,7 +257,9 @@
         addPosition(text, /H[1-3]/.test(el.tagName) || el.getAttribute?.('role') === 'heading' ? 'dom-heading' : 'dom-title', `${selector}#${order++}`);
       }
     }
-    for (const el of [...document.querySelectorAll('body *')].slice(0, 8000)) {
+    const positionNodes = document.querySelectorAll('body *');
+    for (let i = 0, n = Math.min(positionNodes.length, 2600); i < n; i++) {
+      const el = positionNodes[i];
       if (!visible(el)) continue;
       const text = cleanText(el.innerText || el.textContent || '');
       if (!text || text.length < 5 || text.length > 120 || !leafish(el, text)) continue;
@@ -439,10 +442,10 @@
   }
   function visible(el) {
     try {
-      const st = getComputedStyle(el);
-      if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
       const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
+      if (r.width <= 0 || r.height <= 0) return false;
+      const st = getComputedStyle(el);
+      return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
     } catch { return false; }
   }
   function safeRect(el) { try { return el.getBoundingClientRect(); } catch { return { top: 0, left: 0 }; } }
@@ -459,28 +462,8 @@
     }
   });
 
-  try {
-    const originalSendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
-    chrome.runtime.sendMessage = function(message, ...rest) {
-      if (message && typeof message === 'object') {
-        if (message.type === 'SYNC_RECORDS' && Array.isArray(message.records)) message = { ...message, records: enhanceRecords(message.records) };
-        else if (message.type === 'PAGE_SCAN_RESULT' && Array.isArray(message.payload?.records)) message = { ...message, payload: { ...message.payload, records: enhanceRecords(message.payload.records) } };
-      }
-      return originalSendMessage(message, ...rest);
-    };
-  } catch {}
-
-  collectSemanticSnapshot(true);
-  let lastHref = location.href;
-  setInterval(() => {
-    if (location.href !== lastHref) {
-      lastHref = location.href;
-      cache = null;
-      setTimeout(() => collectSemanticSnapshot(true), 700);
-      setTimeout(() => collectSemanticSnapshot(true), 2200);
-    }
-  }, 700);
-
+  // v2.2.1: semantic extraction is strictly on-demand.
   globalThis.__offerTrackEnhanceRecords = enhanceRecords;
-  globalThis.__offerTrackSemanticSnapshot = () => collectSemanticSnapshot(true);
+  globalThis.__offerTrackSemanticSnapshot = () => collectSemanticSnapshot(false);
+  globalThis.__offerTrackInvalidateSemanticCache = () => { cache = null; cacheAt = 0; cacheHref = ''; };
 })();

@@ -178,28 +178,27 @@
         if (apiResult?.status === 'ok') return apiResult;
       }
 
-      if (cfg.followUpStructuredState && group.capabilities?.structuredState && group.strategies?.includes('structured_state')) {
-        const snapshots = [];
-        for (const x of strategyProbe?.jsonSnapshots || []) if (x?.data != null) snapshots.push(x.data);
-        const mainSnapshots = await collectMainWorldSnapshot(tab.id);
-        for (const x of mainSnapshots) if (x?.data != null) snapshots.push(x.data);
-        if (snapshots.length && ApplicationData?.extractRecords) {
-          const structured = ApplicationData.extractRecords(snapshots, group.records, { maxNodes: 6500, maxDepth: 9 });
-          const records = enrichStrategyRecords(structured, group, finalUrl);
+      if (cfg.followUpStructuredState && group.capabilities?.structuredState && group.strategies?.includes('structured_state') && ApplicationData?.extractRecords) {
+        const domSnapshots = (strategyProbe?.jsonSnapshots || []).map(x => x?.data).filter(x => x != null).slice(0, 12);
+        let structuredRecords = [];
+        if (domSnapshots.length) {
+          structuredRecords = ApplicationData.extractRecords(domSnapshots, group.records, { maxNodes: 2800, maxDepth: 7 });
+          const records = enrichStrategyRecords(structuredRecords, group, finalUrl);
           const useful = Strategy?.isUseful ? Strategy.isUseful(group.records, records, Core, 0.8) : { ok: records.length > 0 };
-          if (useful.ok) {
-            return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total } };
-          }
+          if (useful.ok) return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'dom-json' } };
+        }
+        const mainSnapshots = await collectMainWorldSnapshot(tab.id);
+        if (mainSnapshots.length) {
+          const mainRecords = ApplicationData.extractRecords(mainSnapshots.map(x => x.data).filter(Boolean), group.records, { maxNodes: 2200, maxDepth: 6 });
+          const records = enrichStrategyRecords([...structuredRecords, ...mainRecords], group, finalUrl);
+          const useful = Strategy?.isUseful ? Strategy.isUseful(group.records, records, Core, 0.8) : { ok: records.length > 0 };
+          if (useful.ok) return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'main-world' } };
         }
       }
 
       const scan = await scanTab(tab.id, createdTab ? 4 : 2, createdTab);
       if (!scan?.ok) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
-      let records = Array.isArray(scan.records) ? scan.records : [];
-      try {
-        const enhanced = await chrome.tabs.sendMessage(tab.id, { type: 'ENHANCE_RECORDS', records });
-        if (enhanced?.ok && Array.isArray(enhanced.records)) records = enhanced.records;
-      } catch {}
+      const records = Array.isArray(scan.records) ? scan.records : [];
       if (!records.length) {
         const probe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
         if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', strategy: 'page_scan', error: '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
@@ -243,17 +242,17 @@
         let nodes = 0;
         const seen = new WeakSet();
         function scrub(v, depth=0) {
-          if (v == null || nodes++ > 4500 || depth > 7) return null;
-          if (typeof v === 'string') return v.slice(0, 5000);
+          if (v == null || nodes++ > 1400 || depth > 5) return null;
+          if (typeof v === 'string') return v.slice(0, 1200);
           if (typeof v === 'number' || typeof v === 'boolean') return v;
           if (typeof v !== 'object') return null;
           if (seen.has(v)) return null;
           seen.add(v);
-          if (Array.isArray(v)) return v.slice(0, 120).map(x => { try { return scrub(x, depth+1); } catch { return null; } });
+          if (Array.isArray(v)) return v.slice(0, 50).map(x => { try { return scrub(x, depth+1); } catch { return null; } });
           const out = {};
           let count = 0;
-          for (const key of Object.keys(v).slice(0, 140)) {
-            if (count++ > 120) break;
+          for (const key of Object.keys(v).slice(0, 60)) {
+            if (count++ > 55) break;
             try {
               const val = scrub(v[key], depth+1);
               if (val !== null && val !== undefined) out[key] = val;
@@ -280,7 +279,7 @@
     for (const candidate of ranked) {
       const fetched = await fetchJsonCandidate(candidate.url, cfg.followUpApiTimeoutSeconds);
       if (!fetched?.ok || fetched.data == null) continue;
-      const extracted = ApplicationData.extractRecords([fetched.data], group.records, { maxNodes: 7000, maxDepth: 9 });
+      const extracted = ApplicationData.extractRecords([fetched.data], group.records, { maxNodes: 3000, maxDepth: 7 });
       const records = enrichStrategyRecords(extracted, group, pageUrl || group.url);
       const useful = Strategy.isUseful(group.records, records, Core, 0.8);
       if (!useful.ok) continue;
@@ -304,10 +303,10 @@
       });
       if (!response.ok) return { ok: false, status: response.status };
       const length = Number(response.headers.get('content-length') || 0);
-      if (length > 2_000_000) return { ok: false, status: response.status, error: 'API 响应过大' };
+      if (length > 1_000_000) return { ok: false, status: response.status, error: 'API 响应过大' };
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
       const body = await response.text();
-      if (body.length > 2_500_000) return { ok: false, status: response.status, error: 'API 响应过大' };
+      if (body.length > 1_200_000) return { ok: false, status: response.status, error: 'API 响应过大' };
       if (/text\/html/.test(contentType) && /(登录|sign\s*in|login)/i.test(body.slice(0, 12000))) return { ok: false, status: response.status, loginHint: true };
       let data = null;
       try { data = JSON.parse(body); } catch { return { ok: false, status: response.status, error: '不是 JSON 响应' }; }

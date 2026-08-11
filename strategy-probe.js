@@ -12,17 +12,17 @@
 
   function collectJsonSnapshots() {
     const out=[];
-    let budget=1_200_000;
-    const scripts=[...document.querySelectorAll('script[type="application/ld+json"],script[type="application/json"],script#__NEXT_DATA__,script#__NUXT_DATA__,script[data-state],script[id*="STATE"],script[id*="DATA"]')].slice(0,60);
+    let budget=450_000;
+    const scripts=[...document.querySelectorAll('script[type="application/ld+json"],script[type="application/json"],script#__NEXT_DATA__,script#__NUXT_DATA__,script[data-state],script[id*="STATE"],script[id*="DATA"]')].slice(0,20);
     for (const el of scripts) {
       if (budget<=0) break;
       const raw=String(el.textContent||'').trim();
-      if (!raw || raw.length>300_000) continue;
+      if (!raw || raw.length>180_000) continue;
       budget-=raw.length;
       const parsed=safeJson(raw);
       if (parsed != null) out.push({ source:`script#${el.id||el.type||'json'}`, data:parsed });
     }
-    return out.slice(0,40);
+    return out.slice(0,12);
   }
 
   function collectResources() {
@@ -30,7 +30,7 @@
     const seen=new Set();
     let entries=[];
     try { entries=performance.getEntriesByType('resource')||[]; } catch {}
-    for (const e of entries.slice(-1200)) {
+    for (const e of entries.slice(-320)) {
       const raw=String(e?.name||'');
       if (!raw || seen.has(raw)) continue;
       let u;
@@ -40,7 +40,7 @@
       if (!API_HINT_RE.test(key) || API_BAD_RE.test(key)) continue;
       seen.add(raw);
       out.push({ url:u.toString(), initiatorType:String(e?.initiatorType||''), duration:Number(e?.duration||0) });
-      if (out.length>=80) break;
+      if (out.length>=30) break;
     }
     return out;
   }

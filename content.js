@@ -47,6 +47,15 @@
   let lastAutoFingerprint = '';
   let lastAutoAt = 0;
   let autoBackoffUntil = 0;
+  let lastDetected = false;
+  let lastAutoScanAt = 0;
+  let scanPromise = null;
+  let lastSemanticEnhanceAt = 0;
+  let lastSemanticHref = '';
+  let lastPageResultFingerprint = '';
+  let runtimeConfigCache = null;
+  let runtimeConfigAt = 0;
+  const AUTO_SCAN_MIN_GAP = 4000;
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     (async () => {
@@ -63,61 +72,124 @@
   init();
 
   async function init() {
-    const cfg = await getRuntimeConfig();
+    const cfg = await getRuntimeConfig(true);
     if (cfg.enabled === false) return;
-    setTimeout(() => scanPage(false), 850);
-    setTimeout(() => scanPage(false), 1800);
 
-    const obs = new MutationObserver(() => {
-      clearTimeout(observerTimer);
-      observerTimer = setTimeout(() => scanPage(false), 900);
+    setTimeout(() => scheduleAutoScan(0), 1000);
+    setTimeout(() => { if (!lastDetected) scheduleAutoScan(0); }, 4200);
+
+    const obs = new MutationObserver(mutations => {
+      if (!lastDetected && !routeLooksRelevant()) return;
+      if (!mutations.some(isExternalMutation)) return;
+      scheduleAutoScan(1400);
     });
-    obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
 
     routeTimer = setInterval(() => {
       if (location.href !== lastHref) {
         lastHref = location.href;
-        setTimeout(() => scanPage(false), 400);
-        setTimeout(() => scanPage(false), 1300);
-        setTimeout(() => scanPage(false), 2600);
+        lastDetected = routeLooksRelevant();
+        runtimeConfigCache = null;
+        try { globalThis.__offerTrackInvalidateSemanticCache?.(); } catch {}
+        scheduleAutoScan(350);
+        setTimeout(() => scheduleAutoScan(0), 2600);
       }
-    }, 650);
+    }, 1500);
   }
 
-  async function getRuntimeConfig() {
+  function routeLooksRelevant() {
+    const routeText = `${document.title} ${decodeSafe(location.href)}`;
+    return APP_PAGE_RE.test(routeText) || APP_URL_RE.test(routeText);
+  }
+
+  function isOfferTrackNode(node) {
+    const el = node?.nodeType === 1 ? node : node?.parentElement;
+    return !!el && (el.id === 'offertrack-badge' || !!el.closest?.('#offertrack-badge'));
+  }
+
+  function isExternalMutation(mutation) {
+    if (isOfferTrackNode(mutation.target)) return false;
+    const target = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement;
+    const recordSelector = 'article,li,tr,[role="listitem"],[role="row"],[class*="record"],[class*="apply"],[class*="delivery"],[class*="application"],[class*="process"],[class*="job"],[class*="position"]';
+    if (target?.closest?.(recordSelector)) return true;
+    const changed = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
+    if (changed.length && changed.every(isOfferTrackNode)) return false;
+    for (const node of changed.slice(0, 12)) {
+      if (isOfferTrackNode(node)) continue;
+      const el = node?.nodeType === 1 ? node : node?.parentElement;
+      if (el?.matches?.(recordSelector) || el?.querySelector?.(recordSelector)) return true;
+      const t = cleanText(node?.textContent || '').slice(0, 600);
+      if (t && (APP_PAGE_RE.test(t) || DIRECT_STATUS_RE.test(t) || FULL_DATE_RE.test(t) || (POSITION_SIGNAL_RE.test(t) && t.length <= 180))) return true;
+    }
+    return false;
+  }
+
+  function scheduleAutoScan(delay = 1200) {
+    clearTimeout(observerTimer);
+    const since = Date.now() - lastAutoScanAt;
+    const wait = Math.max(0, delay, AUTO_SCAN_MIN_GAP - since);
+    observerTimer = setTimeout(async () => {
+      lastAutoScanAt = Date.now();
+      await scanPage(false).catch(() => {});
+    }, wait);
+  }
+
+  async function getRuntimeConfig(force = false) {
+    const now = Date.now();
+    if (!force && runtimeConfigCache && now - runtimeConfigAt < 30000) return runtimeConfigCache;
     try {
       const res = await chrome.runtime.sendMessage({ type: 'GET_CONTENT_CONFIG', host: location.hostname });
-      return res?.ok ? res : { enabled: true, autoSyncAllowed: false, customSite: null, companyAlias: '' };
+      runtimeConfigCache = res?.ok ? res : { enabled: true, autoSyncAllowed: false, customSite: null, companyAlias: '' };
     } catch {
-      return { enabled: true, autoSyncAllowed: false, customSite: null, companyAlias: '' };
+      runtimeConfigCache = { enabled: true, autoSyncAllowed: false, customSite: null, companyAlias: '' };
     }
+    runtimeConfigAt = now;
+    return runtimeConfigCache;
   }
 
   async function scanPage(userTriggered) {
+    if (scanPromise) return scanPromise;
+    scanPromise = doScanPage(userTriggered);
+    try { return await scanPromise; }
+    finally { scanPromise = null; }
+  }
+
+  async function doScanPage(userTriggered) {
     const cfg = await getRuntimeConfig();
     if (cfg.enabled === false) return { detected: false, records: [], rejectedCount: 0, page: pageMeta() };
-
-    const bodyText = compactText(document.body?.innerText || '').slice(0, 50000);
     const routeText = `${document.title} ${decodeSafe(location.href)}`;
     const titleUrlSignal = APP_PAGE_RE.test(routeText) || APP_URL_RE.test(routeText);
-    const textSignal = APP_PAGE_RE.test(bodyText.slice(0, 16000));
+    const bodyText = compactText(document.body?.innerText || '').slice(0, 30000);
+    const textSignal = APP_PAGE_RE.test(bodyText.slice(0, 12000));
     const recordSignal = (FULL_DATE_RE.test(bodyText) || DIRECT_STATUS_RE.test(bodyText)) && POSITION_SIGNAL_RE.test(bodyText);
-
     if (!cfg.customSite && !titleUrlSignal && !textSignal && !recordSignal && !userTriggered) {
+      lastDetected = false;
       return { detected: false, records: [], rejectedCount: 0, page: pageMeta() };
     }
-
     let parsed = cfg.customSite ? parseCustom(cfg.customSite, cfg.companyAlias) : parseGeneric(cfg.companyAlias);
-    parsed = dedupe(parsed).slice(0, 500);
-    const usable = parsed.filter(isUsableRecord);
+    parsed = dedupe(parsed).slice(0, 300);
+    let usable = parsed.filter(isUsableRecord);
+    const baseDetected = !!cfg.customSite || titleUrlSignal || textSignal || usable.length > 0 || (userTriggered && recordSignal);
+    const shouldEnhance = usable.length && typeof globalThis.__offerTrackEnhanceRecords === 'function' &&
+      (userTriggered || lastSemanticHref !== location.href || Date.now() - lastSemanticEnhanceAt > 30000);
+    if (shouldEnhance) {
+      try {
+        const enhanced = globalThis.__offerTrackEnhanceRecords(usable);
+        if (Array.isArray(enhanced)) usable = enhanced.slice(0, 300);
+        lastSemanticEnhanceAt = Date.now();
+        lastSemanticHref = location.href;
+      } catch {}
+    }
     lastRejectedCount = Math.max(0, parsed.length - usable.length);
     lastRecords = usable;
-
-    const detected = !!cfg.customSite || titleUrlSignal || textSignal || usable.length > 0 || (userTriggered && recordSignal);
-    const payload = { detected, records: usable, rejectedCount: lastRejectedCount, page: pageMeta() };
-    chrome.runtime.sendMessage({ type: 'PAGE_SCAN_RESULT', payload }).catch(() => {});
-
-    if (detected) renderBadge(usable, lastRejectedCount);
+    lastDetected = baseDetected;
+    const payload = { detected: baseDetected, records: usable, rejectedCount: lastRejectedCount, page: pageMeta() };
+    const resultFp = hash32(`${baseDetected}|${location.href}|${fingerprint(usable)}|${lastRejectedCount}`);
+    if (userTriggered || resultFp !== lastPageResultFingerprint) {
+      lastPageResultFingerprint = resultFp;
+      chrome.runtime.sendMessage({ type: 'PAGE_SCAN_RESULT', payload }).catch(() => {});
+    }
+    if (baseDetected) renderBadge(usable, lastRejectedCount);
     await maybeAutoSync(cfg, usable);
     return payload;
   }
@@ -187,7 +259,9 @@
       '[class*="job"]', '[class*="position"]', '[class*="item"]', '[class*="card"]', '[class*="process"]'
     ].join(',');
 
-    for (const el of document.querySelectorAll(structuralSelector)) {
+    const structuralNodes = document.querySelectorAll(structuralSelector);
+    for (let i = 0, n = Math.min(structuralNodes.length, 2200); i < n; i++) {
+      const el = structuralNodes[i];
       if (recordContainerScore(el) >= 5) pool.add(el);
     }
 
@@ -239,8 +313,8 @@
 
   function findRecordAnchors() {
     const result = [];
-    const all = [...document.querySelectorAll('body *')];
-    const max = Math.min(all.length, 9000);
+    const all = document.querySelectorAll('body *');
+    const max = Math.min(all.length, 4500);
     for (let i = 0; i < max; i++) {
       const el = all[i];
       if (!isVisible(el)) continue;
@@ -581,16 +655,18 @@
       }
     }
 
-    const top = [...document.querySelectorAll('header *, nav *, [class*="header"] *')].slice(0, 700);
-    for (const el of top) {
+    const top = document.querySelectorAll('header *, nav *, [class*="header"] *');
+    for (let i = 0, n = Math.min(top.length, 350); i < n; i++) {
+      const el = top[i];
       if (!isVisible(el)) continue;
       const t = cleanText(el.innerText || el.textContent || '');
       if (t.length >= 2 && t.length <= 50) push(t, 'header');
     }
 
     // 很多招聘站的顶栏没有 header/logo class。扫描页面左上区域，用位置、字号与可见性寻找品牌文字。
-    const topLeft = [...document.querySelectorAll('body *')].slice(0, 1800);
-    for (const el of topLeft) {
+    const topLeft = document.querySelectorAll('body *');
+    for (let i = 0, n = Math.min(topLeft.length, 900); i < n; i++) {
+      const el = topLeft[i];
       if (!isVisible(el)) continue;
       const t = cleanText(el.innerText || el.textContent || '');
       if (!t || t.length < 2 || t.length > 36 || !isLeafish(el, t)) continue;
@@ -1288,13 +1364,21 @@
     if (!badge || !badge.isConnected) {
       badge = document.createElement('div');
       badge.id = 'offertrack-badge';
+      badge.classList.add('ot-collapsed');
       badge.innerHTML = `
-        <div class="ot-head"><strong>🎯 OfferTrack</strong><button class="ot-close" title="隐藏">×</button></div>
-        <div class="ot-main"><span class="ot-count">0</span> 条投递记录</div>
-        <div class="ot-sub">已自动解析</div>
-        <div class="ot-actions"><button class="ot-sync">同步到飞书</button><button class="ot-settings">设置</button></div>`;
+        <button class="ot-launcher" type="button" title="打开 OfferTrack" aria-label="打开 OfferTrack">
+          <span class="ot-launch-icon">🎯</span>
+          <span class="ot-launch-count">0</span>
+        </button>
+        <div class="ot-panel" role="dialog" aria-label="OfferTrack 投递助手">
+          <div class="ot-head"><strong>🎯 OfferTrack</strong><button class="ot-close" type="button" title="收起">×</button></div>
+          <div class="ot-main"><span class="ot-count">0</span> 条投递记录</div>
+          <div class="ot-sub">已自动解析</div>
+          <div class="ot-actions"><button class="ot-sync" type="button">同步到飞书</button><button class="ot-settings" type="button">设置</button></div>
+        </div>`;
       document.documentElement.appendChild(badge);
-      badge.querySelector('.ot-close').onclick = () => { badge.remove(); badge = null; };
+      badge.querySelector('.ot-launcher').onclick = () => badge.classList.remove('ot-collapsed');
+      badge.querySelector('.ot-close').onclick = () => badge.classList.add('ot-collapsed');
       badge.querySelector('.ot-settings').onclick = () => chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
       badge.querySelector('.ot-sync').onclick = async () => {
         setBadge('正在同步…', true);
@@ -1304,10 +1388,22 @@
         updateBadgeSync(res);
       };
     }
-    badge.querySelector('.ot-count').textContent = String(records.length);
-    badge.querySelector('.ot-sub').textContent = records.length
-      ? `已解析${rejectedCount ? ` · 忽略 ${rejectedCount} 条低置信项` : ''}`
-      : '未识别到可用投递记录';
+    const count = String(records.length);
+    const mainCount = badge.querySelector('.ot-count');
+    const launchCount = badge.querySelector('.ot-launch-count');
+    if (mainCount && mainCount.textContent !== count) mainCount.textContent = count;
+    if (launchCount) {
+      const launchText = records.length > 99 ? '99+' : count;
+      if (launchCount.textContent !== launchText) launchCount.textContent = launchText;
+      launchCount.classList.toggle('ot-zero', records.length === 0);
+    }
+    const sub = badge.querySelector('.ot-sub');
+    if (sub) {
+      const subText = records.length
+        ? `已解析${rejectedCount ? ` · 忽略 ${rejectedCount} 条低置信项` : ''}`
+        : '未识别到可用投递记录';
+      if (sub.textContent !== subText) sub.textContent = subText;
+    }
   }
 
   function updateBadgeSync(res) {
@@ -1327,10 +1423,10 @@
 
   function isVisible(el) {
     if (!el || !(el instanceof Element)) return false;
-    const style = getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
     const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const style = getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0;
   }
 
   function safeStyle(el) { try { return el ? getComputedStyle(el) : null; } catch { return null; } }

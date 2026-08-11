@@ -1,4 +1,7 @@
-# OfferTrack v2.2.0
+# OfferTrack v2.2.1
+
+
+> v2.2.1 是性能热修复版。若安装 v2.2.0 后出现招聘页面卡死或 Edge 内存持续上涨，请立即升级并在 `edge://extensions/` 重新加载扩展。
 
 OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge 扩展。
 

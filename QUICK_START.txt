@@ -1,15 +1,17 @@
-OfferTrack v2.2.0 - 快速使用说明
+性能热修复提示：如果 v2.2.0 打开招聘网站后 Edge 卡顿或内存持续上涨，请升级 v2.2.1 并重新加载扩展。
+
+OfferTrack v2.2.1 - 快速使用说明
 =================================
 
 OfferTrack 是一个 Microsoft Edge 秋招投递管理插件，可以解析招聘官网投递记录、同步到飞书多维表格，并自动跟进仍在进行中的招聘流程。
 
 一、安装插件
 ------------
-1. 解压 OfferTrack_Edge_v2.2.0.zip。
+1. 解压 OfferTrack_Edge_v2.2.1.zip。
 2. Edge 打开：edge://extensions/
 3. 开启“开发人员模式”。
 4. 点击“加载解压缩的扩展”。
-5. 选择 OfferTrack_Edge_v2.2.0 文件夹。
+5. 选择 OfferTrack_Edge_v2.2.1 文件夹。
 
 二、飞书配置
 ------------

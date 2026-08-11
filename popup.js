@@ -27,12 +27,7 @@ async function scan() {
     if (!tab?.id || !/^https:/.test(tab.url || '')) throw new Error('请打开 HTTPS 招聘网站的“我的投递/投递记录”页面');
     const res = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_PAGE' });
     if (!res?.ok) throw new Error(res?.error || '无法解析当前页面');
-    let records = res.records || [];
-    try {
-      const enhanced = await chrome.tabs.sendMessage(tab.id, { type: 'ENHANCE_RECORDS', records });
-      if (enhanced?.ok && Array.isArray(enhanced.records)) records = enhanced.records;
-    } catch {}
-    currentRecords = records;
+    currentRecords = Array.isArray(res.records) ? res.records : [];
     currentPage = res.page || {};
     rejectedCount = res.rejectedCount || 0;
     $('count').textContent = currentRecords.length;

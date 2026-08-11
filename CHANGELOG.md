@@ -1,5 +1,13 @@
 # Change Log
 
+## 2.2.1
+
+- 移除 `content-ui.js` MutationObserver 自触发死循环。
+- 页面重扫忽略 OfferTrack 自身 DOM，取消 characterData 监听，并增加 4 秒最小扫描间隔。
+- Semantic Parser 改为按需执行，取消运行时消息 monkey-patch 和独立路由轮询。
+- 收紧 DOM、脚本、Structured State、MAIN-world Store 和 API JSON 扫描/复制预算。
+- Structured Extractor 增加相关对象门控，降低大型状态树临时对象分配。
+
 ## 2.2.0
 
 - 新增自动跟进三级执行策略：`API GET -> Structured State -> Page Scan`。

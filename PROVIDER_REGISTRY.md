@@ -1,6 +1,4 @@
-# Recruitment Provider Registry
-
-OfferTrack v2.1 将自动跟进从“按公司适配”升级为“按招聘系统 Provider 识别”。
+# Recruitment Provider Registry — v2.2
 
 当前 Provider：
 
@@ -10,13 +8,14 @@ OfferTrack v2.1 将自动跟进从“按公司适配”升级为“按招聘系�
 - `self_hosted_spa` — 自研 SPA / Hash 路由招聘站
 - `generic_web` — 通用网页回退
 
-每个 Provider 暴露统一元信息：
+v2.2 中 Provider 除了识别招聘系统，还声明执行能力：
 
-- `id / name / family`
-- `strategies`
-- `capabilities`
-- Provider URL 检测与检查页评分
+- `api_get`
+- `structured_state`
+- `page_scan`
 
-v2.1 仍以页面扫描作为实际执行层，Provider Registry 主要负责识别、检查 URL 选择和能力声明。v2.2 将在这个接口之上增加 `API -> Structured State -> Page Scan` 的三级执行策略。
+ATS 与自研 SPA 默认按 `API GET -> Structured State -> Page Scan` 尝试；Generic Web 默认从 Structured State 开始，不主动做 API 探测。
 
-原则：Provider 代码不写具体公司名称，只有真正无法归类的自研招聘站才落入 `self_hosted_spa` / `generic_web`。
+API GET 仅限同源 HTTPS 查询，并排除提交、修改、删除、撤回、验证码、埋点等明显非只读路径。成功 API 只有在高置信覆盖飞书目标岗位时才采用。
+
+Provider 代码仍不写具体公司名称；不同公司的同一招聘系统共享 Provider 能力。

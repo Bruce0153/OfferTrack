@@ -1,47 +1,28 @@
 # OfferTrack V2 开发路线
 
-## Phase 1 — v2.0.0 自动化骨架（当前）
+## Phase 1 — v2.0 自动化骨架
+- [x] chrome.alarms 周期调度
+- [x] 飞书任务读取、网站分组、状态 Diff、飞书回写
+- [x] 安全模式与后台标签页模式
 
-- [x] `chrome.alarms` 周期调度
-- [x] 默认 6 小时，可配置 1–72 小时
-- [x] 从飞书读取进行中的投递
-- [x] 按招聘网站域名分组，避免同一网站重复打开
-- [x] 安全模式：复用当前已打开页面
-- [x] 实验模式：创建非激活标签页 → 扫描 → 自动关闭
-- [x] 登录失效 / 页面为空 / 匹配失败分类
-- [x] 岗位高置信匹配
-- [x] 状态 Diff
-- [x] 飞书回写最后检查时间与错误
-- [x] 只在状态真正变化时修改当前状态
-- [x] 系统通知
-- [x] 定时任务运行状态与“立即跟进”按钮
+## Phase 2 — Provider 与请求优先
+- [x] v2.1 Recruitment Provider Registry
+- [x] Feishu Jobs / Moka / Beisen / Self-hosted SPA
+- [x] v2.2 页面 JSON / SSR / MAIN-world State 读取
+- [x] v2.2 安全 GET API 发现与高置信采用
+- [x] v2.2 API → Structured State → Page Scan 三级降级
+- [x] v2.2 成功 API Hint 的本地安全缓存
+- [ ] v2.3 Session Manager / 登录健康检查
+- [ ] v2.4 Job Queue、退避、错误冷却
 
-## Phase 2 — Provider 识别与请求优先
+## Phase 3 — 正确性与可观测性
+- [ ] v2.5 Application Matching / providerApplicationId
+- [ ] v2.6 招聘状态状态机与防错误回退
+- [ ] v2.7 解析诊断中心 / 自动跟进日志
+- [ ] v2.8 Provider 覆盖率与真实 Bad Case Fixture
 
-目标：减少后台打开网页次数。
+## Phase 4 — 产品化
+- [ ] v2.9 自动跟进控制台 UX
+- [ ] v3.0 稳定自动跟进 Agent
 
-- [x] Recruitment Provider Registry（v2.1）
-- [x] Feishu Jobs / Moka / Beisen / 自研 SPA 类型识别（v2.1）
-- [ ] 页面公开 JSON / SSR State / API Endpoint 发现
-- [ ] API → Structured State → Rendered DOM 三级降级
-- [ ] 登录会话健康检查
-- [ ] 站点级指数退避和错误冷却
-- [ ] 同一 Provider 的字段映射共用，不按公司写 Adapter
-
-## Phase 3 — 自动跟进控制中心
-
-- [ ] 每个招聘网站显示：已登录 / 失效 / 待验证 / 风控
-- [ ] 每条投递独立开启/关闭自动跟进
-- [ ] 检查历史
-- [ ] 状态变更历史
-- [ ] 点击通知直接定位对应招聘页面
-- [ ] 失败网站一键重新登录
-
-## Phase 4 — 更高级自动化（谨慎）
-
-- [ ] 可选 API 学习模式
-- [ ] 可选浏览器请求观测，用于发现稳定的招聘进度接口
-- [ ] Provider 级 schema 版本检测
-- [ ] 更完善的请求限速/并发控制
-
-原则：不保存招聘网站密码，不绕过验证码，不规避招聘网站风控。
+原则：不保存招聘网站密码，不绕过验证码，不执行远程代码，不因为检查失败覆盖已有招聘状态。

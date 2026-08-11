@@ -1,5 +1,5 @@
 const fs=require('fs'),vm=require('vm'),path=require('path'),assert=require('assert');
-const fieldNames=['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','下一步行动','面试时间','优先级','备注','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统'];
+const fieldNames=['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','下一步行动','面试时间','优先级','备注','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
 const rows=[{record_id:'xp-r',fields:{'公司':'小鹏汽车','岗位名称':'【27届校招】基座模型/多模态模型算法工程师','当前状态':'筛选中','招聘平台':'xiaopeng.jobs.feishu.cn','岗位链接':'https://xiaopeng.jobs.feishu.cn/398875/position/application','唯一记录ID':'xp-uid'}}];
 const store={settings:{appId:'a',appSecret:'s',appToken:'app',tableId:'tbl',baseUrl:'',followUpEnabled:true,followUpIntervalHours:6,followUpMode:'background_tabs',followUpMaxSitesPerRun:12,followUpIncludeTerminal:false,followUpNotify:false,followUpTabTimeoutSeconds:2,customSites:{},companyAliases:{},trustedAutoSyncHosts:[]}};
 const listeners={},alarms=new Map(),created=[],removed=[],updates=[]; const event=n=>({addListener(fn){(listeners[n] ||= []).push(fn);}});

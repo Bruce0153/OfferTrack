@@ -1,4 +1,4 @@
-# OfferTrack v2.1.0
+# OfferTrack v2.2.0
 
 OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge 扩展。
 
@@ -18,6 +18,7 @@ OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge
 - 可选实验模式：后台逐个打开招聘网站页面检查，完成后自动关闭
 - 登录失效、页面无记录、匹配失败等情况写入飞书检查状态，不会覆盖已有招聘状态
 - 招聘状态变化时发送 Edge / 系统通知
+- v2.2 自动跟进优先使用 `API GET → Structured State → Page Scan` 三级降级
 
 ## 安装
 
@@ -101,22 +102,40 @@ v2 自动跟进字段：
 - 登录状态
 - 最近错误
 - 招聘系统
+- 检查方式
 
 `自动跟进` 默认留空时会参与自动检查；如果某条记录不希望自动检查，可手动填写 `关闭`、`否` 或 `不跟进`。
 
-## v2.1 Recruitment Provider Registry
 
-自动跟进现在会先识别招聘网站所属的招聘系统，而不是按具体公司写适配器。当前支持：
+## v2.2 Provider Strategy Executor
 
-- Feishu Jobs
-- Moka
-- Beisen / Zhiye
-- Self-hosted SPA
-- Generic Web 回退
+自动跟进现在不再直接跳到页面 DOM，而是按 Provider 能力依次尝试：
 
-Provider Registry 会参与检查页 URL 选择、标签页优先级和运行诊断。自动跟进后，飞书会新增/更新“招聘系统”字段。
+`API GET → Structured State → Page Scan`
 
-目前 v2.1 仍以真实页面解析作为实际检查执行层；v2.2 将基于 Provider 的 `strategies / capabilities` 接口加入 API、页面底层 Structured State 与 DOM 的三级降级。
+### API GET
+
+- 只尝试 HTTPS、同源、明显属于申请/投递查询的 GET 地址。
+- 路径包含 `submit / create / update / delete / withdraw / cancel` 等动作词时直接拒绝。
+- 只在返回 JSON 能高置信匹配飞书现有岗位时采用结果。
+- API 失败、401/403/405、非 JSON、响应过大或匹配不足时自动降级。
+- 成功且 URL 不含 token/sign/session 等敏感参数时，才会保存本机 API Hint 供后续复用。
+
+### Structured State
+
+OfferTrack 会读取：
+
+- `application/json / ld+json` script
+- `__NEXT_DATA__ / __NUXT__ / __INITIAL_STATE__` 等常见 SSR/Store
+- 页面中已经存在的结构化申请记录
+
+读取过程只做有界复制和 `JSON.parse`，不执行网页脚本、不使用 `eval`，也不会保存页面里的登录凭证。
+
+### Page Scan
+
+如果前两层无法得到足够可信的投递记录，继续使用 v1/v2 已验证的 DOM + Semantic Parser。任何上层策略失败都不会阻断页面兜底。
+
+当前 Provider：Feishu Jobs、Moka、Beisen / Zhiye、Self-hosted SPA、Generic Web。
 
 ## 自动跟进
 
@@ -176,8 +195,8 @@ Provider Registry 会参与检查页 URL 选择、标签页优先级和运行诊
 
 ## V2 当前阶段
 
-v2.0.0 已完成稳定的自动化骨架；v2.1.0 在其上增加 Provider Registry：
+v2.0.0 已完成自动化骨架；v2.1.0 增加 Provider Registry；v2.2.0 增加三级检查执行器：
 
-`Scheduler → 飞书任务 → Provider Registry → 浏览器会话 → 页面解析 → 岗位匹配 → 状态 Diff → 飞书更新 → 通知`
+`Scheduler → 飞书任务 → Provider Registry → API GET → Structured State → Page Scan → 岗位匹配 → 状态 Diff → 飞书更新 → 通知`
 
-后续版本会逐步增加公开/内部 JSON API 优先检查、Structured State、会话健康检查和请求级降级策略。详见 `V2_ROADMAP.md`。
+后续版本将继续加强 Session Manager、任务队列、状态机和诊断中心。详见 `V2_ROADMAP.md`。

@@ -33,6 +33,8 @@ function fill() {
   $('followUpIntervalHours').value = Number(settings.followUpIntervalHours || 6);
   $('followUpMaxSitesPerRun').value = Number(settings.followUpMaxSitesPerRun || 12);
   $('followUpMode').value = settings.followUpMode || 'open_tabs';
+  $('followUpApiFirst').checked = settings.followUpApiFirst !== false;
+  $('followUpStructuredState').checked = settings.followUpStructuredState !== false;
   $('followUpNotify').checked = settings.followUpNotify !== false;
   $('followUpIncludeTerminal').checked = !!settings.followUpIncludeTerminal;
 }
@@ -51,6 +53,9 @@ function collect() {
     followUpIntervalHours: Math.min(72, Math.max(1, Number($('followUpIntervalHours').value || 6))),
     followUpMaxSitesPerRun: Math.min(30, Math.max(1, Number($('followUpMaxSitesPerRun').value || 12))),
     followUpMode: $('followUpMode').value || 'open_tabs',
+    followUpApiFirst: $('followUpApiFirst').checked,
+    followUpStructuredState: $('followUpStructuredState').checked,
+    followUpApiTimeoutSeconds: Number(settings.followUpApiTimeoutSeconds || 6),
     followUpNotify: $('followUpNotify').checked,
     followUpIncludeTerminal: $('followUpIncludeTerminal').checked,
     followUpTabTimeoutSeconds: Number(settings.followUpTabTimeoutSeconds || 25),
@@ -109,6 +114,7 @@ async function initFields() {
   }
 }
 
+
 async function saveAlias() {
   const host = normalizeHost($('aliasHost').value);
   const company = $('aliasCompany').value.trim();
@@ -165,6 +171,7 @@ function setStatus(text, error=false) {
   $('status').textContent = text;
   $('status').style.color = error ? '#c94646' : '#647085';
 }
+
 
 async function runFollowUp() {
   await save();

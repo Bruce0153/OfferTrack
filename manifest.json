@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "OfferTrack - 秋招投递助手",
-  "version": "2.1.0",
-  "description": "自动识别并同步招聘投递记录；支持 Recruitment Provider Registry、每 6 小时自动跟进和飞书状态更新。",
+  "version": "2.2.0",
+  "description": "自动识别并同步招聘投递记录；支持 Provider Registry、API/Structured State/Page Scan 三级自动跟进和飞书状态更新。",
   "permissions": [
     "storage",
     "activeTab",
     "alarms",
-    "notifications"
+    "notifications",
+    "scripting"
   ],
   "host_permissions": [
     "https://*/*"
@@ -40,6 +41,7 @@
       "js": [
         "content.js",
         "semantic.js",
+        "strategy-probe.js",
         "followup-probe.js",
         "content-ui.js"
       ],
@@ -49,5 +51,5 @@
       "run_at": "document_idle"
     }
   ],
-  "version_name": "2.1.0"
+  "version_name": "2.2.0"
 }

@@ -31,7 +31,7 @@ const feishuGroup = {
 const enriched = registry.enrichGroup(feishuGroup, core);
 assert.strictEqual(enriched.providerId, 'feishu_jobs');
 assert(/position\/application/.test(enriched.url), 'Feishu Jobs should prefer application page');
-assert.deepStrictEqual(enriched.strategies, ['structured_state', 'page_scan']);
+assert.deepStrictEqual(enriched.strategies, ['api_get', 'structured_state', 'page_scan']);
 
 const groups = registry.enrichGroups([
   feishuGroup,

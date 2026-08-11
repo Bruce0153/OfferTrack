@@ -32,6 +32,7 @@
       <label class="check"><input id="autoSync" type="checkbox" /> 对已验证网站自动同步 <span>（某网站必须先手动成功同步一次，才会进入自动同步白名单）</span></label>
     </section>
 
+
     <section class="panel">
       <h2>4. 自动跟进招聘进度</h2>
       <label class="check"><input id="followUpEnabled" type="checkbox" /> 每隔一段时间自动检查飞书中仍在进行的投递</label>
@@ -45,12 +46,15 @@
           <option value="background_tabs">实验模式：必要时后台打开标签页检查并自动关闭</option>
         </select>
       </label>
+      <label class="check"><input id="followUpApiFirst" type="checkbox" /> 优先尝试安全 GET API <span>（仅同源、只读查询；失败自动降级）</span></label>
+      <label class="check"><input id="followUpStructuredState" type="checkbox" /> 读取页面 Structured State <span>（JSON / SSR Store；不执行远程代码）</span></label>
       <label class="check"><input id="followUpNotify" type="checkbox" /> 招聘状态发生变化时发送系统通知</label>
       <label class="check"><input id="followUpIncludeTerminal" type="checkbox" /> 继续检查 Offer / 已结束 / 已撤回记录</label>
-      <p class="hint">推荐先使用“安全模式”。它只复用你当前 Edge 已经登录并打开的招聘网站，不保存招聘网站账号密码。实验模式会按飞书中的岗位链接逐个创建非激活标签页，等待解析后自动关闭；遇到登录过期、验证码或风控时只记录错误，不会尝试绕过验证。</p>
+      <p class="hint">v2.2 按 API GET → Structured State → Page Scan 三级策略检查。API 只尝试同源、明确属于投递查询且不含提交/撤回/修改等动作的 GET 地址；只有高置信匹配当前飞书岗位时才采用结果。失败会自动降级，不会覆盖原状态。实验后台标签页模式仍只复用 Edge 已有登录会话。</p>
       <div class="buttons"><button id="runFollowUp" class="primary">立即跟进一次</button><button id="refreshFollowUp">刷新运行状态</button></div>
       <div id="followUpStatus" class="status"></div>
     </section>
+
 
     <section class="panel">
       <h2>5. 公司名覆盖（可选）</h2>
@@ -73,8 +77,4 @@
     </section>
 
     <div class="bottom"><button id="save" class="primary big">保存设置</button><span id="saveMsg"></span></div>
-    <section class="privacy">隐私：插件不会保存招聘网站账号密码。手动同步、页面自动同步和你主动开启的“自动跟进”会把解析结果/检查状态写入你配置的飞书多维表格；实验后台标签页模式只复用 Edge 当前已有的登录会话。</section>
-  </main>
-  <script src="options.js"></script>
-</body>
-</html>
+    <section class="privacy">隐私：插件不会保存��� f9�dy��z-)�c��k�� x� ��b�b�9d#9�ix� zhmzgh�!�b�9d#9�iyd�9/h9..�b�9o 9d+��8�':!�b�:-��/���'y/&����)����9��������9��y⭹� ya�yaiy/h:acy�k��:h�.i�i&���:(j9�/;�&�k��j�9d#�c�9�!��o�hmy�(yo#�c�i#y�*Y�H9od�bcym칧"y�9�n�oey/&�+�x� ���X�[ۏ���XZ[����ܚ\ܘ�H��[ۜ˚�ȏ���ܚ\��؛�O���[�

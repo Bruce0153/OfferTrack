@@ -42,8 +42,8 @@
       name: 'Feishu Jobs',
       family: 'ats',
       priority: 100,
-      strategies: ['structured_state', 'page_scan'],
-      capabilities: { structuredState: true, pageScan: true, backgroundTab: true, apiDirect: false },
+      strategies: ['api_get', 'structured_state', 'page_scan'],
+      capabilities: { apiDirect: true, structuredState: true, pageScan: true, backgroundTab: true },
       detect(ctx) {
         let score = 0;
         const hostMatch = endsWithHost(ctx.host, 'jobs.feishu.cn');
@@ -63,8 +63,8 @@
       name: 'Moka',
       family: 'ats',
       priority: 90,
-      strategies: ['structured_state', 'page_scan'],
-      capabilities: { structuredState: true, pageScan: true, backgroundTab: true, apiDirect: false },
+      strategies: ['api_get', 'structured_state', 'page_scan'],
+      capabilities: { apiDirect: true, structuredState: true, pageScan: true, backgroundTab: true },
       detect(ctx) {
         let score = 0;
         const hostMatch = endsWithHost(ctx.host, 'mokahr.com');
@@ -84,8 +84,8 @@
       name: 'Beisen / Zhiye',
       family: 'ats',
       priority: 90,
-      strategies: ['structured_state', 'page_scan'],
-      capabilities: { structuredState: true, pageScan: true, backgroundTab: true, apiDirect: false },
+      strategies: ['api_get', 'structured_state', 'page_scan'],
+      capabilities: { apiDirect: true, structuredState: true, pageScan: true, backgroundTab: true },
       detect(ctx) {
         let score = 0;
         const hostMatch = endsWithHost(ctx.host, 'zhiye.com');
@@ -102,8 +102,8 @@
       name: 'Self-hosted SPA',
       family: 'generic',
       priority: 40,
-      strategies: ['structured_state', 'page_scan'],
-      capabilities: { structuredState: true, pageScan: true, backgroundTab: true, apiDirect: false },
+      strategies: ['api_get', 'structured_state', 'page_scan'],
+      capabilities: { apiDirect: true, structuredState: true, pageScan: true, backgroundTab: true },
       detect(ctx) {
         let score = 0;
         const u = safeUrl(ctx.url);
@@ -125,8 +125,8 @@
       name: 'Generic Web',
       family: 'generic',
       priority: 0,
-      strategies: ['page_scan'],
-      capabilities: { structuredState: false, pageScan: true, backgroundTab: true, apiDirect: false },
+      strategies: ['structured_state', 'page_scan'],
+      capabilities: { apiDirect: false, structuredState: true, pageScan: true, backgroundTab: true },
       detect() { return 1; },
       scoreUrl() { return 0; }
     }

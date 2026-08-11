@@ -1,0 +1,28 @@
+const fs=require('fs'),vm=require('vm'),path=require('path'),assert=require('assert');
+const fieldNames=['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','下一步行动','面试时间','优先级','备注','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
+const rows=[{record_id:'r1',fields:{'公司':'示例科技','岗位名称':'大模型算法工程师','当前状态':'筛选中','招聘平台':'demo.jobs.feishu.cn','岗位链接':'https://demo.jobs.feishu.cn/123/position/application','唯一记录ID':'u1'}}];
+const store={settings:{appId:'a',appSecret:'s',appToken:'app',tableId:'tbl',baseUrl:'',followUpEnabled:true,followUpIntervalHours:6,followUpMode:'open_tabs',followUpMaxSitesPerRun:12,followUpIncludeTerminal:false,followUpNotify:false,followUpApiFirst:true,followUpStructuredState:true,customSites:{},companyAliases:{},trustedAutoSyncHosts:[]}};
+const listeners={},alarms=new Map(),updates=[]; const event=n=>({addListener(fn){(listeners[n] ||= []).push(fn);}}); let scanCalls=0;
+const chrome={
+ runtime:{onInstalled:event('i'),onStartup:event('s'),onMessage:event('m'),openOptionsPage:async()=>{}},
+ storage:{local:{get:async ks=>Array.isArray(ks)?Object.fromEntries(ks.map(k=>[k,store[k]])):{[ks]:store[ks]},set:async o=>Object.assign(store,o),setAccessLevel:async()=>{}},onChanged:event('c')},
+ alarms:{onAlarm:event('a'),create:async(n,i)=>alarms.set(n,{name:n,periodInMinutes:i.periodInMinutes,scheduledTime:Date.now()+i.delayInMinutes*60000}),get:async n=>alarms.get(n),clear:async n=>alarms.delete(n)},
+ tabs:{
+  query:async()=>[{id:7,url:'https://demo.jobs.feishu.cn/123/position/application',status:'complete'}],
+  get:async id=>({id,url:'https://demo.jobs.feishu.cn/123/position/application',status:'complete'}),
+  create:async()=>{throw Error('must not create')}, remove:async()=>{},
+  sendMessage:async(id,msg)=>{
+    if(msg.type==='COLLECT_STRATEGY_PROBE') return {ok:true,page:{url:'https://demo.jobs.feishu.cn/123/position/application',title:'招聘'},resources:[],jsonSnapshots:[{source:'__NEXT_DATA__',data:{props:{applications:[{positionName:'大模型算法工程师',applicationStatus:'待测评',cityName:'深圳',applyTime:'2026-08-10'}]}}}]};
+    if(msg.type==='SCAN_PAGE'){scanCalls++; return {ok:true,detected:true,records:[]};}
+    if(msg.type==='ENHANCE_RECORDS') return {ok:true,records:msg.records||[]};
+    if(msg.type==='PROBE_PAGE') return {ok:true,loginRequired:false};
+    return {ok:false};
+  }
+ },
+ scripting:{executeScript:async()=>[]},
+ notifications:{create:async()=>''}
+};
+function resp(j){const body=JSON.stringify(j);return{ok:true,status:200,statusText:'OK',headers:{get:()=> 'application/json'},json:async()=>j,text:async()=>body};}
+async function fetchMock(url,opt={}){url=String(url);if(url.includes('/auth/'))return resp({code:0,tenant_access_token:'t',expire:7200});if(url.includes('/fields?'))return resp({code:0,data:{items:fieldNames.map((n,i)=>({field_name:n,field_id:'f'+i,type:1,is_primary:i===0})),has_more:false}});if(url.includes('/records?'))return resp({code:0,data:{items:rows,has_more:false}});if(url.includes('/batch_update')){updates.push(JSON.parse(opt.body));return resp({code:0,data:{records:[]}})}throw Error('unexpected fetch '+url)}
+const ctx={console,chrome,fetch:fetchMock,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,globalThis:null};ctx.globalThis=ctx;vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'..','background.js'),'utf8'),ctx);ctx.OfferTrackFollowUpCore=require('../followup-core.js');ctx.OfferTrackProviderRegistry=require('../provider-registry.js');ctx.OfferTrackApplicationData=require('../application-data.js');ctx.OfferTrackFollowUpStrategy=require('../followup-strategy.js');vm.runInContext(fs.readFileSync(path.join(__dirname,'..','followup-background.js'),'utf8'),ctx);
+(async()=>{const r=await ctx.OfferTrackFollowUp._execute('manual');assert.strictEqual(r.changed,1);assert.strictEqual(scanCalls,0,'structured state should avoid page scan');assert.strictEqual(r.strategyStats.structured_state,1);const patched=updates.flatMap(x=>x.records).find(x=>x.record_id==='r1');assert.strictEqual(patched.fields['当前状态'],'笔试/测评');assert.strictEqual(patched.fields['检查方式'],'Structured State');console.log('OfferTrack structured-state strategy E2E: PASS');})();

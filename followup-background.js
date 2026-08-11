@@ -3,9 +3,11 @@
 
   const Core = globalThis.OfferTrackFollowUpCore;
   const Providers = globalThis.OfferTrackProviderRegistry;
+  const ApplicationData = globalThis.OfferTrackApplicationData;
+  const Strategy = globalThis.OfferTrackFollowUpStrategy;
   const ALARM = 'offertrack-follow-up';
   const LEASE_MS = 20 * 60 * 1000;
-  const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统'];
+  const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
   let runningPromise = null;
 
   function normalizedSettings(input = {}) {
@@ -16,6 +18,9 @@
       followUpMaxSitesPerRun: Math.min(30, Math.max(1, Number(input.followUpMaxSitesPerRun || 12))),
       followUpIncludeTerminal: !!input.followUpIncludeTerminal,
       followUpNotify: input.followUpNotify !== false,
+      followUpApiFirst: input.followUpApiFirst !== false,
+      followUpStructuredState: input.followUpStructuredState !== false,
+      followUpApiTimeoutSeconds: Math.min(15, Math.max(3, Number(input.followUpApiTimeoutSeconds || 6))),
       followUpTabTimeoutSeconds: Math.min(60, Math.max(8, Number(input.followUpTabTimeoutSeconds || 25)))
     };
   }
@@ -120,11 +125,13 @@
       ok: true, source, mode: cfg.followUpMode, at: Date.now(),
       totalRecords: targets.length, totalSites: allGroups.length, scheduledSites: groups.length,
       providers: Providers?.summarize ? Providers.summarize(allGroups) : [],
+      strategyStats: {},
       checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, details: []
     };
 
     for (const group of groups) {
       const inspected = await inspectGroup(group, cfg).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
+      if (inspected?.strategy) result.strategyStats[inspected.strategy] = (result.strategyStats[inspected.strategy] || 0) + 1;
       const patchResult = await applyGroupResult(settings, token, group, inspected);
       for (const k of ['checked','changed','failed','loginRequired','waiting','unmatched']) result[k] += patchResult[k] || 0;
       if (patchResult.detail) result.details.push(patchResult.detail);
@@ -140,23 +147,54 @@
   }
 
   async function inspectGroup(group, cfg) {
+    if (cfg.followUpApiFirst && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
+      const cached = await loadApiHints(group);
+      if (cached.length) {
+        const cachedResult = await tryApiCandidates(group, cfg, cached, group.url, true);
+        if (cachedResult?.status === 'ok') return cachedResult;
+      }
+    }
+
     let tab = await findBestOpenTab(group);
     let createdTab = false;
     if (!tab && cfg.followUpMode === 'background_tabs') {
       tab = await chrome.tabs.create({ url: group.url, active: false });
       createdTab = true;
     }
-    if (!tab) return { host: group.host, provider: group.provider, status: 'waiting', error: '没有找到已打开的招聘网站页面', records: [], page: null };
+    if (!tab) return { host: group.host, provider: group.provider, status: 'waiting', error: '没有找到已打开的招聘网站页面，且没有可复用的安全 API', records: [], page: null };
 
     try {
       if (createdTab) await waitForTabLoad(tab.id, cfg.followUpTabTimeoutSeconds * 1000);
-      const scan = await scanTab(tab.id, createdTab ? 4 : 2, createdTab);
       const latestTab = await chrome.tabs.get(tab.id).catch(() => tab);
       const finalUrl = latestTab?.url || tab.url || group.url;
       if (/\/(?:login|signin|sign-in)(?:[/?#]|$)|(?:login|signin)=/i.test(finalUrl || '')) {
         return { host: group.host, provider: group.provider, status: 'login', error: '招聘网站登录状态已失效', records: [], page: { url: finalUrl } };
       }
-      if (!scan?.ok) return { host: group.host, provider: group.provider, status: 'error', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
+
+      const strategyProbe = await collectStrategyProbe(tab.id);
+
+      if (cfg.followUpApiFirst && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
+        const apiResult = await tryApiCandidates(group, cfg, strategyProbe?.resources || [], finalUrl, false);
+        if (apiResult?.status === 'ok') return apiResult;
+      }
+
+      if (cfg.followUpStructuredState && group.capabilities?.structuredState && group.strategies?.includes('structured_state')) {
+        const snapshots = [];
+        for (const x of strategyProbe?.jsonSnapshots || []) if (x?.data != null) snapshots.push(x.data);
+        const mainSnapshots = await collectMainWorldSnapshot(tab.id);
+        for (const x of mainSnapshots) if (x?.data != null) snapshots.push(x.data);
+        if (snapshots.length && ApplicationData?.extractRecords) {
+          const structured = ApplicationData.extractRecords(snapshots, group.records, { maxNodes: 6500, maxDepth: 9 });
+          const records = enrichStrategyRecords(structured, group, finalUrl);
+          const useful = Strategy?.isUseful ? Strategy.isUseful(group.records, records, Core, 0.8) : { ok: records.length > 0 };
+          if (useful.ok) {
+            return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total } };
+          }
+        }
+      }
+
+      const scan = await scanTab(tab.id, createdTab ? 4 : 2, createdTab);
+      if (!scan?.ok) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
       let records = Array.isArray(scan.records) ? scan.records : [];
       try {
         const enhanced = await chrome.tabs.sendMessage(tab.id, { type: 'ENHANCE_RECORDS', records });
@@ -164,14 +202,146 @@
       } catch {}
       if (!records.length) {
         const probe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
-        if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', error: '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
-        if (probe?.blocked) return { host: group.host, provider: group.provider, status: 'error', error: '页面出现验证码或访问限制', records: [], page: scan.page || { url: finalUrl } };
-        return { host: group.host, provider: group.provider, status: 'empty', error: '页面已打开，但没有解析到投递记录', records: [], page: scan.page || { url: finalUrl } };
+        if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', strategy: 'page_scan', error: '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
+        if (probe?.blocked) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: '页面出现验证码或访问限制', records: [], page: scan.page || { url: finalUrl } };
+        return { host: group.host, provider: group.provider, status: 'empty', strategy: 'page_scan', error: '页面已打开，但没有解析到投递记录', records: [], page: scan.page || { url: finalUrl } };
       }
-      return { host: group.host, provider: group.provider, status: 'ok', records, page: scan.page || { url: finalUrl } };
+      return { host: group.host, provider: group.provider, status: 'ok', strategy: 'page_scan', records, page: scan.page || { url: finalUrl } };
     } finally {
       if (createdTab && tab?.id != null) await chrome.tabs.remove(tab.id).catch(() => {});
     }
+  }
+
+  function enrichStrategyRecords(records, group, pageUrl) {
+    const fallbackCompany = group.records?.[0]?.company || '';
+    const fallbackPlatform = group.records?.[0]?.platform || group.host;
+    return (records || []).map(r => ({
+      ...r,
+      company: r.company || fallbackCompany,
+      platform: r.platform || fallbackPlatform,
+      url: r.url || pageUrl || group.url
+    }));
+  }
+
+  async function collectStrategyProbe(tabId) {
+    let res = await chrome.tabs.sendMessage(tabId, { type: 'COLLECT_STRATEGY_PROBE' }).catch(() => null);
+    if (res?.ok) return res;
+    if (chrome.scripting?.executeScript) {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['strategy-probe.js'], world: 'ISOLATED' }).catch(() => null);
+      res = await chrome.tabs.sendMessage(tabId, { type: 'COLLECT_STRATEGY_PROBE' }).catch(() => null);
+    }
+    return res?.ok ? res : { ok: false, resources: [], jsonSnapshots: [], page: null };
+  }
+
+  async function collectMainWorldSnapshot(tabId) {
+    if (!chrome.scripting?.executeScript) return [];
+    const injected = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        const names = ['__NEXT_DATA__','__NUXT__','__NUXT_DATA__','__INITIAL_STATE__','__PRELOADED_STATE__','__APOLLO_STATE__','__INITIAL_PROPS__','__DATA__','__STORE__'];
+        let nodes = 0;
+        const seen = new WeakSet();
+        function scrub(v, depth=0) {
+          if (v == null || nodes++ > 4500 || depth > 7) return null;
+          if (typeof v === 'string') return v.slice(0, 5000);
+          if (typeof v === 'number' || typeof v === 'boolean') return v;
+          if (typeof v !== 'object') return null;
+          if (seen.has(v)) return null;
+          seen.add(v);
+          if (Array.isArray(v)) return v.slice(0, 120).map(x => { try { return scrub(x, depth+1); } catch { return null; } });
+          const out = {};
+          let count = 0;
+          for (const key of Object.keys(v).slice(0, 140)) {
+            if (count++ > 120) break;
+            try {
+              const val = scrub(v[key], depth+1);
+              if (val !== null && val !== undefined) out[key] = val;
+            } catch {}
+          }
+          return out;
+        }
+        const snapshots = [];
+        for (const name of names) {
+          try {
+            const value = globalThis[name];
+            if (value && typeof value === 'object') snapshots.push({ name, data: scrub(value) });
+          } catch {}
+        }
+        return snapshots;
+      }
+    }).catch(() => []);
+    return Array.isArray(injected?.[0]?.result) ? injected[0].result : [];
+  }
+
+  async function tryApiCandidates(group, cfg, resources, pageUrl, fromCache) {
+    if (!Strategy?.rankApiCandidates || !ApplicationData?.extractRecords) return null;
+    const ranked = Strategy.rankApiCandidates(resources, [], pageUrl || group.url, 3);
+    for (const candidate of ranked) {
+      const fetched = await fetchJsonCandidate(candidate.url, cfg.followUpApiTimeoutSeconds);
+      if (!fetched?.ok || fetched.data == null) continue;
+      const extracted = ApplicationData.extractRecords([fetched.data], group.records, { maxNodes: 7000, maxDepth: 9 });
+      const records = enrichStrategyRecords(extracted, group, pageUrl || group.url);
+      const useful = Strategy.isUseful(group.records, records, Core, 0.8);
+      if (!useful.ok) continue;
+      if (!fromCache) await saveApiHint(group, candidate.url, pageUrl || group.url);
+      return { host: group.host, provider: group.provider, status: 'ok', strategy: 'api_get', records, page: { url: pageUrl || group.url }, evidence: { endpoint: redactUrl(candidate.url), matched: useful.matched, total: useful.total, cached: !!fromCache } };
+    }
+    return null;
+  }
+
+  async function fetchJsonCandidate(url, timeoutSeconds) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(3000, Number(timeoutSeconds || 6) * 1000));
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        redirect: 'follow',
+        headers: { 'Accept': 'application/json, text/plain;q=0.9, */*;q=0.5' },
+        signal: controller.signal
+      });
+      if (!response.ok) return { ok: false, status: response.status };
+      const length = Number(response.headers.get('content-length') || 0);
+      if (length > 2_000_000) return { ok: false, status: response.status, error: 'API 响应过大' };
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      const body = await response.text();
+      if (body.length > 2_500_000) return { ok: false, status: response.status, error: 'API 响应过大' };
+      if (/text\/html/.test(contentType) && /(登录|sign\s*in|login)/i.test(body.slice(0, 12000))) return { ok: false, status: response.status, loginHint: true };
+      let data = null;
+      try { data = JSON.parse(body); } catch { return { ok: false, status: response.status, error: '不是 JSON 响应' }; }
+      return { ok: true, status: response.status, data };
+    } catch (e) {
+      return { ok: false, error: e?.name === 'AbortError' ? 'API 请求超时' : (e?.message || String(e)) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function loadApiHints(group) {
+    const stored = await chrome.storage.local.get(['followUpApiHints']);
+    const entry = stored.followUpApiHints?.[group.host];
+    if (!entry || entry.providerId !== group.providerId || Date.now() - Number(entry.successAt || 0) > 30*24*3600*1000) return [];
+    const url = Strategy?.sanitizeCacheUrl ? Strategy.sanitizeCacheUrl(entry.url, entry.pageUrl || group.url) : '';
+    return url ? [url] : [];
+  }
+
+  async function saveApiHint(group, url, pageUrl) {
+    const safe = Strategy?.sanitizeCacheUrl ? Strategy.sanitizeCacheUrl(url, pageUrl) : '';
+    if (!safe) return;
+    const stored = await chrome.storage.local.get(['followUpApiHints']);
+    const hints = stored.followUpApiHints && typeof stored.followUpApiHints === 'object' ? stored.followUpApiHints : {};
+    hints[group.host] = { providerId: group.providerId, url: safe, pageUrl: Strategy.sanitizeCacheUrl(pageUrl, pageUrl) || pageUrl.split('#')[0], successAt: Date.now() };
+    await chrome.storage.local.set({ followUpApiHints: hints });
+  }
+
+  function redactUrl(url) {
+    try {
+      const u = new URL(url);
+      for (const k of [...u.searchParams.keys()]) u.searchParams.set(k, '…');
+      return `${u.origin}${u.pathname}${u.search}`.slice(0, 400);
+    } catch { return String(url || '').slice(0, 300); }
   }
 
   async function findBestOpenTab(group) {
@@ -221,24 +391,24 @@
     const now = new Date().toLocaleString('zh-CN', { hour12: false });
     const patches = [];
     const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, detail: null };
-    const common = { '最后检查时间': now, '招聘系统': group.providerName || group.provider?.name || 'Generic Web' };
+    const common = { '最后检查时间': now, '招聘系统': group.providerName || group.provider?.name || 'Generic Web', '检查方式': inspected?.strategy ? (Strategy?.strategyLabel ? Strategy.strategyLabel(inspected.strategy) : inspected.strategy) : '' };
 
     if (inspected.status === 'waiting') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '等待打开招聘网站', '登录状态': '未知', '最近错误': inspected.error || '' } });
       summary.waiting = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'waiting', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'waiting', message: inspected.error };
     } else if (inspected.status === 'login') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '需要登录', '登录状态': '已失效', '最近错误': inspected.error || '' } });
       summary.loginRequired = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'login', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'login', message: inspected.error };
     } else if (inspected.status === 'error') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '检查失败', '登录状态': '未知', '最近错误': safeCell(inspected.error, 500) } });
       summary.failed = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'error', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'error', message: inspected.error };
     } else if (inspected.status === 'empty') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '未解析到投递', '登录状态': '可访问', '最近错误': inspected.error || '' } });
       summary.unmatched = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'empty', message: inspected.error };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'empty', message: inspected.error };
     } else {
       const matches = Core.matchScanned(group.records, inspected.records || []);
       const changedItems = [];
@@ -265,7 +435,7 @@
         }
         patches.push({ record_id: target.recordId, fields });
       }
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', status: 'ok', checked: summary.checked, changed: summary.changed, unmatched: summary.unmatched, changes: changedItems.slice(0, 5) };
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'ok', checked: summary.checked, changed: summary.changed, unmatched: summary.unmatched, changes: changedItems.slice(0, 5), evidence: inspected?.evidence || null };
     }
 
     for (const chunk of chunks(patches, 500)) {

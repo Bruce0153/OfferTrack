@@ -1,0 +1,128 @@
+name: Bootstrap v2.5 from tested v2.4 payload
+
+on:
+  push:
+    branches: [feature/v2.5]
+    paths:
+      - '.github/workflows/bootstrap-v25.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v2.5
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore exact v2.4 package payload
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64, io, json, shutil, zipfile
+
+          root = Path('.')
+          payload_dir = root / 'tools' / 'v240-payload'
+          if not payload_dir.exists():
+              raise SystemExit('v2.4 payload directory is missing')
+
+          def read(name):
+              p = payload_dir / name
+              if not p.exists():
+                  raise SystemExit(f'missing payload chunk: {name}')
+              return p.read_text(encoding='ascii').strip()
+
+          parts = [read('00.txt')]
+          if (payload_dir / '01a.txt').exists() and (payload_dir / '01b.txt').exists():
+              parts.append(read('01a.txt') + read('01b.txt'))
+          else:
+              parts.append(read('01.txt'))
+
+          for i in range(2, 12):
+              parts.append(read(f'{i:02d}.txt'))
+
+          chunk12 = read('12.txt')
+          if (payload_dir / '12b.txt').exists():
+              chunk12 += read('12b.txt')
+          parts.append(chunk12)
+          parts.append(read('13.txt'))
+
+          payload = base64.b64decode(''.join(parts), validate=True)
+          with zipfile.ZipFile(io.BytesIO(payload)) as z:
+              bad = z.testzip()
+              if bad:
+                  raise SystemExit(f'corrupt v2.4 payload member: {bad}')
+              z.extractall(root)
+
+          manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+          if manifest.get('version') != '2.4.0':
+              raise SystemExit(f"expected v2.4.0 payload, got {manifest.get('version')}")
+          if 'cookies' not in manifest.get('permissions', []):
+              raise SystemExit('restored v2.4 payload does not contain cookies permission')
+
+          obsolete = [
+              'INSTALL_EDGE.bat', 'PROVIDER_REGISTRY.md', 'SESSION_MANAGER.md',
+              'TEST_REPORT.md', 'V2_ROADMAP.md',
+              'tests/generic-company-quality.test.js',
+              'tests/message-routing-recovery.test.js',
+              'tests/v230-safety.test.js',
+              '.github/workflows/publish-v240.yml',
+              '.github/workflows/publish-v240-final.yml',
+              '.github/workflows/bootstrap-v25.yml',
+          ]
+          for rel in obsolete:
+              p = root / rel
+              if p.exists():
+                  p.unlink()
+
+          if (root / 'tools' / 'v240-payload').exists():
+              shutil.rmtree(root / 'tools' / 'v240-payload')
+          for rel in ['tools/apply-v240.py', 'tools/apply-v240b.py']:
+              p = root / rel
+              if p.exists():
+                  p.unlink()
+          tools = root / 'tools'
+          if tools.exists() and not any(tools.iterdir()):
+              tools.rmdir()
+
+          print('Restored tested v2.4 package:', manifest['version'])
+          PY
+
+      - name: Syntax and manifest checks
+        run: |
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+
+      - name: Full regression suite
+        run: |
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+
+      - name: Performance and privacy invariants
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+          if (manifest.version !== '2.4.0') throw new Error('baseline version mismatch');
+          if (!(manifest.permissions || []).includes('cookies')) throw new Error('cookies permission missing');
+          const prod = fs.readdirSync('.').filter(x => x.endsWith('.js')).map(x => fs.readFileSync(x, 'utf8')).join('\n');
+          if (/setInterval\s*\(/.test(prod)) throw new Error('setInterval forbidden in production');
+          if (/characterData\s*:\s*true/.test(prod)) throw new Error('characterData observer forbidden');
+          const cookie = fs.readFileSync('cookie-session.js', 'utf8');
+          if (/storage\.local\.set/.test(cookie) || /console\.log/.test(cookie)) throw new Error('cookie privacy boundary violated');
+          console.log('baseline safety invariants PASS');
+          NODE
+
+      - name: Commit verified v2.4 baseline onto feature branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(v2.5): establish verified v2.4 baseline"
+          git push origin feature/v2.5

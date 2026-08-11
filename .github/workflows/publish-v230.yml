@@ -20,11 +20,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Apply v2.3 patches
+      - name: Install exact v2.3 payload
         run: |
-          git apply tools/v230-core.patch
-          git apply tools/v230-ui.patch
-          git apply tools/v230-docs-tests.patch
+          base64 -d tools/v230-payload.b64 > /tmp/v230-payload.tar.gz
+          tar -xzf /tmp/v230-payload.tar.gz -C .
       - name: Syntax and regression tests
         run: |
           for f in *.js; do node --check "$f"; done
@@ -34,7 +33,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f tools/v230-core.patch tools/v230-ui.patch tools/v230-docs-tests.patch tools/v230-ready.txt .github/workflows/publish-v230.yml
+          rm -f tools/v230-core.patch tools/v230-ui.patch tools/v230-docs-tests.patch tools/v230-payload.b64 tools/v230-ready.txt
+          rm -f .github/workflows/publish-v230.yml
           git add -A
           git commit -m "feat(v2.3): add session health manager and cooldown recovery"
           git push origin v2

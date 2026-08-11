@@ -84,6 +84,7 @@
         await releaseLease(result);
         return result;
       } catch (e) {
+        globalThis.OfferTrackChangeJournal?.clearRecentMatches?.();
         const failState = { source, at: Date.now(), ok: false, message: friendlyError(e), checked: 0, changed: 0, failed: 1 };
         await chrome.storage.local.set({ lastFollowUp: failState });
         await releaseLease(failState);
@@ -121,7 +122,9 @@
     const targets = Core.selectTargets(existing, cfg);
     const rawGroups = Core.groupTargets(targets);
     const allGroups = Providers?.enrichGroups ? Providers.enrichGroups(rawGroups, Core) : rawGroups;
-    const groups = allGroups.slice(0, cfg.followUpMaxSitesPerRun);
+    const groups = globalThis.OfferTrackFollowUpQueue?.selectGroups
+      ? globalThis.OfferTrackFollowUpQueue.selectGroups(allGroups, cfg, source)
+      : allGroups.slice(0, cfg.followUpMaxSitesPerRun);
 
     const result = {
       ok: true, source, mode: cfg.followUpMode, at: Date.now(),
@@ -132,6 +135,7 @@
     };
 
     for (const group of groups) {
+      await globalThis.OfferTrackFollowUpQueue?.markRunning?.(group, source).catch(() => null);
       const inspected = await inspectGroup(group, cfg, source).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
       if (inspected?.strategy) result.strategyStats[inspected.strategy] = (result.strategyStats[inspected.strategy] || 0) + 1;
       const sessionEvent = Sessions?.record ? await Sessions.record(group, inspected, source).catch(() => null) : null;
@@ -139,12 +143,14 @@
       const patchResult = await applyGroupResult(settings, token, group, inspected);
       for (const k of ['checked','changed','failed','loginRequired','sessionBlocked','waiting','unmatched']) result[k] += patchResult[k] || 0;
       if (patchResult.detail) result.details.push(patchResult.detail);
+      await globalThis.OfferTrackFollowUpQueue?.completeGroup?.(group, inspected, patchResult).catch(() => null);
       await sleep(250);
     }
 
     if (allGroups.length > groups.length) result.details.push({ host: '', status: 'limited', message: `本轮按设置只检查前 ${groups.length}/${allGroups.length} 个招聘网站` });
     result.sessionHealth = Sessions?.state ? (await Sessions.state().catch(() => null))?.summary || null : null;
     result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，需验证/受限 ${result.sessionBlocked}，失败 ${result.failed}`;
+    await globalThis.OfferTrackChangeJournal?.appendFromResult?.(result).catch(() => []);
     await chrome.storage.local.set({ lastFollowUp: result });
     if (cfg.followUpNotify && result.changed > 0) await notifyChanges(result);
     if (cfg.followUpNotifySessionIssues && result.sessionIssues.length) await notifySessionIssues(result);

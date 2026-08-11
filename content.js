@@ -91,16 +91,21 @@
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
 
-    routeTimer = setInterval(() => {
-      if (location.href !== lastHref) {
-        lastHref = location.href;
-        lastDetected = routeLooksRelevant();
-        runtimeConfigCache = null;
-        try { globalThis.__offerTrackInvalidateSemanticCache?.(); } catch {}
-        scheduleAutoScan(350);
-        setTimeout(() => scheduleAutoScan(0), 2600);
-      }
-    }, 1500);
+    const onRouteSignal = () => {
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      lastDetected = routeLooksRelevant();
+      runtimeConfigCache = null;
+      try { globalThis.__offerTrackInvalidateSemanticCache?.(); } catch {}
+      scheduleAutoScan(350);
+      setTimeout(() => scheduleAutoScan(0), 2600);
+    };
+    window.addEventListener('hashchange', onRouteSignal, { passive: true });
+    window.addEventListener('popstate', onRouteSignal, { passive: true });
+    window.addEventListener('pageshow', onRouteSignal, { passive: true });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) onRouteSignal();
+    }, { passive: true });
   }
 
   function routeLooksRelevant() {

@@ -7,9 +7,10 @@
 
   const STORAGE_KEY = 'followUpChangeJournal';
   const MAX_ENTRIES = 300;
-  let staged = [];
+  const recentMatches = new Map();
 
   const clean = (v, max = 180) => String(v || '').replace(/[\t\r\n\u00a0]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, max);
+  const keyOf = (company, position) => `${clean(company,120).toLowerCase()}|${clean(position,160).toLowerCase()}`;
 
   function hostOf(url) {
     try { return new URL(String(url || '')).hostname.toLowerCase().replace(/^www\./, ''); }
@@ -36,35 +37,44 @@
     return !!entry.company && !!entry.position && !!entry.oldStatus && !!entry.newStatus && entry.oldStatus !== entry.newStatus;
   }
 
-  function stage(input = {}) {
-    const target = input.target || {};
-    const scanned = input.scanned || {};
-    const decision = input.decision || {};
-    const match = scanned._offerTrackMatch || input.match || {};
-    const entry = sanitizeEntry({
-      company: target.company,
-      position: target.position,
-      oldStatus: decision.from || target.status,
-      newStatus: decision.to || scanned.status,
-      matchConfidence: match.confidence || input.matchConfidence,
-      matchMethod: match.method || input.matchMethod,
+  function rememberMatch(target = {}, scanned = {}) {
+    const match = scanned?._offerTrackMatch || {};
+    const key = keyOf(target.company, target.position);
+    if (!key || key === '|') return;
+    recentMatches.set(key, {
+      matchConfidence: Number(match.confidence || 0),
+      matchMethod: clean(match.method, 80),
       host: hostOf(target.url || scanned.url),
-      provider: target.platform || '',
-      checkMethod: ''
+      provider: clean(target.platform, 100),
+      at: Date.now()
     });
-    if (decision.allowed && decision.changed && isRealChange(entry)) staged.push(entry);
-    if (staged.length > 100) staged = staged.slice(-100);
-    return entry;
+    if (recentMatches.size > 200) {
+      const first = recentMatches.keys().next().value;
+      if (first) recentMatches.delete(first);
+    }
   }
 
-  function enrichFromResult(entry, result = {}) {
-    const detail = (result.details || []).find(d => d && entry.host && d.host === entry.host) ||
-      (result.details || []).find(d => Array.isArray(d?.changes) && d.changes.some(c => c.position === entry.position && c.from === entry.oldStatus && c.to === entry.newStatus));
-    return sanitizeEntry({
-      ...entry,
-      provider: detail?.provider || entry.provider,
-      checkMethod: detail?.strategy || entry.checkMethod
-    });
+  function entriesFromResult(result = {}) {
+    const out = [];
+    for (const detail of result.details || []) {
+      for (const change of detail?.changes || []) {
+        const meta = recentMatches.get(keyOf(change.company, change.position)) || {};
+        const entry = sanitizeEntry({
+          at: result.at || Date.now(),
+          company: change.company,
+          position: change.position,
+          oldStatus: change.from,
+          newStatus: change.to,
+          provider: detail.provider || meta.provider,
+          checkMethod: detail.strategy || '',
+          matchConfidence: meta.matchConfidence,
+          matchMethod: meta.matchMethod,
+          host: detail.host || meta.host
+        });
+        if (isRealChange(entry)) out.push(entry);
+      }
+    }
+    return out;
   }
 
   async function read() {
@@ -85,19 +95,21 @@
     return safe;
   }
 
-  async function flush(result = {}) {
-    const pending = staged;
-    staged = [];
-    if (!pending.length) return [];
-    return append(pending.map(x => enrichFromResult(x, result)));
+  async function appendFromResult(result = {}) {
+    const entries = entriesFromResult(result);
+    try { return await append(entries); }
+    finally { recentMatches.clear(); }
   }
 
-  function clearStaged() { staged = []; }
+  function clearRecentMatches() { recentMatches.clear(); }
 
   async function clear() {
-    staged = [];
+    recentMatches.clear();
     if (globalThis.chrome?.storage?.local) await chrome.storage.local.remove([STORAGE_KEY]);
   }
 
-  return { STORAGE_KEY, MAX_ENTRIES, sanitizeEntry, isRealChange, stage, enrichFromResult, read, append, flush, clearStaged, clear };
+  return {
+    STORAGE_KEY, MAX_ENTRIES, sanitizeEntry, isRealChange, rememberMatch, entriesFromResult,
+    read, append, appendFromResult, clearRecentMatches, clear
+  };
 });

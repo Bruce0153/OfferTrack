@@ -6,6 +6,7 @@
   'use strict';
 
   const STORAGE_KEY = 'followUpJobQueueV2';
+  const QUEUE_ALARM = 'offertrack-follow-up-queue-v2';
   const MAX_JOBS = 120;
   const MAX_RETRIES = 4;
   const PRIORITY = Object.freeze({ manual: 100, cookie_change: 90, page_open: 70, alarm: 50, retry: 40, unknown: 30 });
@@ -80,6 +81,16 @@
     });
   }
 
+  async function scheduleNext(jobs = memory) {
+    if (!globalThis.chrome?.alarms) return;
+    const future = jobs.filter(j => j.nextRunAt > Date.now()).sort((a,b) => a.nextRunAt - b.nextRunAt)[0];
+    if (!future) {
+      await chrome.alarms.clear(QUEUE_ALARM).catch(() => false);
+      return;
+    }
+    await chrome.alarms.create(QUEUE_ALARM, { when: Math.max(Date.now() + 60_000, future.nextRunAt) }).catch(() => {});
+  }
+
   async function read() {
     if (!globalThis.chrome?.storage?.local) return memory.slice();
     const stored = await chrome.storage.local.get([STORAGE_KEY]);
@@ -91,6 +102,7 @@
   async function write(jobs) {
     memory = sortJobs(jobs).slice(0, MAX_JOBS);
     if (globalThis.chrome?.storage?.local) await chrome.storage.local.set({ [STORAGE_KEY]: memory });
+    await scheduleNext(memory);
     return memory.slice();
   }
 
@@ -131,7 +143,7 @@
   async function markRunning(group, source = 'alarm') {
     const host = normalizeHost(group?.host);
     if (!host) return null;
-    const job = await enqueue({
+    return enqueue({
       host,
       provider: group?.providerName || group?.provider?.name || '',
       applications: (group?.records || []).map(r => r.recordId),
@@ -139,13 +151,11 @@
       retryCount: activeJob?.retryCount || 0,
       nextRunAt: Date.now()
     });
-    return job;
   }
 
   function shouldRetry(inspected = {}, patchResult = {}) {
     const status = String(inspected?.status || '');
-    if (['login','challenge','rate_limited','session_paused'].includes(status)) return false;
-    if (status === 'waiting') return false;
+    if (['login','challenge','rate_limited','session_paused','waiting'].includes(status)) return false;
     return status === 'error' || Number(patchResult?.failed || 0) > 0;
   }
 
@@ -166,9 +176,7 @@
         lastResult: { status: inspected?.status || 'error', checked: patchResult.checked, changed: patchResult.changed, failed: patchResult.failed || 1, at: Date.now() }
       });
       if (idx >= 0) jobs[idx] = next; else jobs.push(next);
-    } else {
-      if (idx >= 0) jobs.splice(idx, 1);
-    }
+    } else if (idx >= 0) jobs.splice(idx, 1);
     await write(jobs);
   }
 
@@ -187,9 +195,9 @@
   async function clear() { return write([]); }
 
   return {
-    STORAGE_KEY, MAX_JOBS, MAX_RETRIES, PRIORITY,
+    STORAGE_KEY, QUEUE_ALARM, MAX_JOBS, MAX_RETRIES, PRIORITY,
     normalizeHost, reasonKey, priorityFor, backoffMs, normalizeJob, mergeJobs, sortJobs,
-    read, write, enqueue, knownHost, setActiveJob, getActiveJob, clearActiveJob,
+    scheduleNext, read, write, enqueue, knownHost, setActiveJob, getActiveJob, clearActiveJob,
     selectGroups, markRunning, shouldRetry, completeGroup, nextReady, withActiveJob, clear
   };
 });

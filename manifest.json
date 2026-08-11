@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "OfferTrack - 秋招投递助手",
-  "version": "2.3.1",
-  "description": "自动识别并同步招聘投递记录；支持会话健康管理、三级自动跟进、页面桥自动恢复与多源公司名语义校验。",
+  "version": "2.5.0",
+  "description": "自动识别并同步招聘投递记录；支持优先级跟进队列、置信度匹配、状态迁移保护、变更日志与三级自动跟进。",
   "permissions": [
     "storage",
     "activeTab",
     "alarms",
     "notifications",
-    "scripting"
+    "scripting",
+    "cookies"
   ],
   "host_permissions": [
     "https://*/*"
@@ -50,5 +51,5 @@
       "run_at": "document_idle"
     }
   ],
-  "version_name": "2.3.1"
+  "version_name": "2.5.0"
 }

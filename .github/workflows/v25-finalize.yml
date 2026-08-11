@@ -1,0 +1,116 @@
+name: Finalize OfferTrack v2.5
+
+on:
+  push:
+    branches: [feature/v2.5]
+    paths: ['.github/workflows/v25-finalize.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v2.5
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply v2.5 integration
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+
+          # Integrate queue lifecycle and committed-only journal into existing follow-up loop.
+          p=Path('followup-background.js')
+          s=p.read_text(encoding='utf-8')
+          pairs=[
+            ("    const groups = allGroups.slice(0, cfg.followUpMaxSitesPerRun);", "    const groups = globalThis.OfferTrackFollowUpQueue?.selectGroups\n      ? globalThis.OfferTrackFollowUpQueue.selectGroups(allGroups, cfg, source)\n      : allGroups.slice(0, cfg.followUpMaxSitesPerRun);"),
+            ("    for (const group of groups) {\n      const inspected = await inspectGroup(group, cfg, source).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));", "    for (const group of groups) {\n      await globalThis.OfferTrackFollowUpQueue?.markRunning?.(group, source).catch(() => null);\n      const inspected = await inspectGroup(group, cfg, source).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));"),
+            ("      for (const k of ['checked','changed','failed','loginRequired','sessionBlocked','waiting','unmatched']) result[k] += patchResult[k] || 0;\n      if (patchResult.detail) result.details.push(patchResult.detail);\n      await sleep(250);", "      for (const k of ['checked','changed','failed','loginRequired','sessionBlocked','waiting','unmatched']) result[k] += patchResult[k] || 0;\n      if (patchResult.detail) result.details.push(patchResult.detail);\n      await globalThis.OfferTrackFollowUpQueue?.completeGroup?.(group, inspected, patchResult).catch(() => null);\n      await sleep(250);"),
+            ("    result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，需验证/受限 ${result.sessionBlocked}，失败 ${result.failed}`;\n    await chrome.storage.local.set({ lastFollowUp: result });", "    result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，需验证/受限 ${result.sessionBlocked}，失败 ${result.failed}`;\n    await globalThis.OfferTrackChangeJournal?.appendFromResult?.(result).catch(() => []);\n    await chrome.storage.local.set({ lastFollowUp: result });"),
+            ("      } catch (e) {\n        const failState = { source, at: Date.now(), ok: false, message: friendlyError(e), checked: 0, changed: 0, failed: 1 };", "      } catch (e) {\n        globalThis.OfferTrackChangeJournal?.clearRecentMatches?.();\n        const failState = { source, at: Date.now(), ok: false, message: friendlyError(e), checked: 0, changed: 0, failed: 1 };")
+          ]
+          for old,new in pairs:
+            if old not in s: raise SystemExit('followup integration anchor missing: '+old[:120])
+            s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          # Preserve v2.2.1 performance invariant: no URL setInterval polling.
+          p=Path('content.js')
+          s=p.read_text(encoding='utf-8')
+          old="""    routeTimer = setInterval(() => {
+      if (location.href !== lastHref) {
+        lastHref = location.href;
+        lastDetected = routeLooksRelevant();
+        runtimeConfigCache = null;
+        try { globalThis.__offerTrackInvalidateSemanticCache?.(); } catch {}
+        scheduleAutoScan(350);
+        setTimeout(() => scheduleAutoScan(0), 2600);
+      }
+    }, 1500);"""
+          new="""    const onRouteSignal = () => {
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      lastDetected = routeLooksRelevant();
+      runtimeConfigCache = null;
+      try { globalThis.__offerTrackInvalidateSemanticCache?.(); } catch {}
+      scheduleAutoScan(350);
+      setTimeout(() => scheduleAutoScan(0), 2600);
+    };
+    window.addEventListener('hashchange', onRouteSignal, { passive: true });
+    window.addEventListener('popstate', onRouteSignal, { passive: true });
+    window.addEventListener('pageshow', onRouteSignal, { passive: true });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) onRouteSignal();
+    }, { passive: true });"""
+          if old not in s: raise SystemExit('content route polling anchor missing')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          # Remove failed payload publishing/bootstrap residue and obsolete release docs.
+          for rel in [
+            '.github/workflows/bootstrap-v25.yml','.github/workflows/v25-integrate-retry.yml','.github/workflows/v25-finalize.yml',
+            '.github/workflows/publish-v240.yml','.github/workflows/publish-v240-final.yml',
+            'INSTALL_EDGE.bat','PROVIDER_REGISTRY.md','SESSION_MANAGER.md','TEST_REPORT.md','V2_ROADMAP.md',
+            'tools/apply-v240.py','tools/apply-v240b.py'
+          ]:
+            q=Path(rel)
+            if q.exists(): q.unlink()
+          q=Path('tools/v240-payload')
+          if q.exists(): shutil.rmtree(q)
+          q=Path('tools')
+          if q.exists() and not any(q.iterdir()): q.rmdir()
+          PY
+      - name: Validate all tests and safety invariants
+        run: |
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+          node - <<'NODE'
+          const fs=require('fs');
+          const m=require('./manifest.json');
+          if(m.version!=='2.5.0'||!m.permissions.includes('cookies')) throw new Error('manifest v2.5 invariant failed');
+          const prod=fs.readdirSync('.').filter(x=>x.endsWith('.js')).map(x=>fs.readFileSync(x,'utf8')).join('\n');
+          if(/setInterval\s*\(/.test(prod)) throw new Error('setInterval forbidden in production');
+          if(/characterData\s*:\s*true/.test(prod)) throw new Error('characterData observer forbidden');
+          const cookie=fs.readFileSync('cookie-session.js','utf8');
+          if(/storage\.local\.set/.test(cookie)||/console\.(?:log|info|debug)/.test(cookie)) throw new Error('cookie privacy invariant failed');
+          const matcher=require('./application-matcher.js');
+          if(matcher.AUTO_UPDATE_MIN_CONFIDENCE < .85) throw new Error('auto-update confidence threshold too low');
+          const queue=require('./followup-queue.js');
+          if(queue.MAX_RETRIES > 4) throw new Error('retry budget too high');
+          for(const f of ['PROVIDER_REGISTRY.md','SESSION_MANAGER.md','TEST_REPORT.md','V2_ROADMAP.md','INSTALL_EDGE.bat']) if(fs.existsSync(f)) throw new Error('obsolete file remains: '+f);
+          console.log('OfferTrack v2.5 final safety invariants PASS');
+          NODE
+      - name: Commit verified source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(v2.5): integrate verified follow-up orchestrator"
+          git push origin feature/v2.5

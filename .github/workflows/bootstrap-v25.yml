@@ -26,38 +26,81 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import base64, io, json, shutil, zipfile
+          import base64, hashlib, io, json, re, shutil, zipfile
 
           root = Path('.')
           payload_dir = root / 'tools' / 'v240-payload'
           if not payload_dir.exists():
               raise SystemExit('v2.4 payload directory is missing')
 
+          EXPECTED = {
+              '00.txt': '9b657d5944623250108302bd2b73197c204b2eb2d1aaa25beeb9a8994424fd90',
+              '02.txt': '5051242929aa09e3a680ea21bbb0e41ccbd1b0f678d5b7f3f82edb5be09d5dfb',
+              '03.txt': '79f175c2aa2a4fed4ef9aa93ba4625ff195b4479db23f545cf8025c35c5fc395',
+              '04.txt': '2ebaa61fe84235e925221d70ca51c9ead090ed92dbc48e9eac076fd9301e2a16',
+              '05.txt': '3f91701e91cded6474fb4bf6aa417f18b7314cdcfb3490255152fd7f5bcb24bf',
+              '06.txt': '35d3f8d11a1799065b50247db5103771d4787888863082e904bab9c6a3982578',
+              '07.txt': '70ce97d824df639d3ee27798520ea82ae5d5e5ff18428d5281931ab25fe71ea4',
+              '08.txt': '1ec0a88f8b44ae0b20dcb88fd88958a427c1bc98a67449d8de7a70c2147c7563',
+              '09.txt': 'f7cf46acc8d9ca22f0f138443b6cc17ad1ec07765c56e04cd2a309aa0ea59b21',
+              '10.txt': '6128159237f9996296ace10394ad848334317a20767779b858f4d07f1d3ea02b',
+              '11.txt': 'cd05ca974410c634de38263099162962493b9ee9e8dc12f3e3c7a6e6640a90e9',
+              '13.txt': '13c7715a7e9f066cc3ef210740e1dd1c85ce27dc7517e0c0be2332322865e685',
+          }
+          CHUNK01_SHA = '7806d80a053776f60a4c21c33a074512033a437d7a70d4aef8392a8541702398'
+          FULL12 = '69a452dcd154d2e2cb296d58053e64153d3dbff794bb8e61a354a492f6bc85bd'
+          HALF12A = 'e34f0299358fbe8a724de9c537cf64514937fecb56662d48eb0cb1eda7c46b42'
+          HALF12B = '798a5273334c8cc62a28efb06d33708057a8443885841d32fe4d49b99b710e6d'
+          PAYLOAD_SHA = '152fbd8923435698b5789fe71f043efa37a256871c8346d50b949f42a4fcfe71'
+
+          sha = lambda s: hashlib.sha256(s.encode('ascii')).hexdigest()
+
           def read(name):
               p = payload_dir / name
               if not p.exists():
                   raise SystemExit(f'missing payload chunk: {name}')
-              # Payload files were transported through text commits and may contain
-              # harmless line wrapping. Normalize ASCII whitespace before decoding.
-              return ''.join(p.read_text(encoding='ascii').split())
+              raw = p.read_text(encoding='ascii')
+              cleaned = re.sub(r'[^A-Za-z0-9+/=]', '', raw)
+              if not cleaned:
+                  raise SystemExit(f'empty payload chunk after normalization: {name}')
+              return cleaned
 
-          parts = [read('00.txt')]
+          def checked(name):
+              data = read(name)
+              got = sha(data)
+              print(name, 'len=', len(data), 'sha256=', got)
+              if got != EXPECTED[name]:
+                  raise SystemExit(f'normalized payload hash mismatch: {name}: {got}')
+              return data
+
+          parts = [checked('00.txt')]
+
           if (payload_dir / '01a.txt').exists() and (payload_dir / '01b.txt').exists():
-              parts.append(read('01a.txt') + read('01b.txt'))
+              part01 = read('01a.txt') + read('01b.txt')
           else:
-              parts.append(read('01.txt'))
+              part01 = read('01.txt')
+          if sha(part01) != CHUNK01_SHA:
+              raise SystemExit(f'normalized payload hash mismatch: 01: {sha(part01)}')
+          parts.append(part01)
 
           for i in range(2, 12):
-              parts.append(read(f'{i:02d}.txt'))
+              parts.append(checked(f'{i:02d}.txt'))
 
-          chunk12 = read('12.txt')
-          if (payload_dir / '12b.txt').exists():
-              chunk12 += read('12b.txt')
-          parts.append(chunk12)
-          parts.append(read('13.txt'))
+          raw12 = read('12.txt')
+          raw12b = read('12b.txt') if (payload_dir / '12b.txt').exists() else ''
+          if sha(raw12) == FULL12:
+              parts.append(raw12)
+          elif sha(raw12) == HALF12A and raw12b and sha(raw12b) == HALF12B:
+              parts.append(raw12 + raw12b)
+          else:
+              raise SystemExit(f'normalized payload hash mismatch: 12={sha(raw12)} 12b={sha(raw12b) if raw12b else "missing"}')
 
-          encoded = ''.join(parts)
-          payload = base64.b64decode(encoded, validate=True)
+          parts.append(checked('13.txt'))
+          payload = base64.b64decode(''.join(parts), validate=True)
+          payload_hash = hashlib.sha256(payload).hexdigest()
+          if payload_hash != PAYLOAD_SHA:
+              raise SystemExit(f'v2.4 payload SHA256 mismatch: {payload_hash}')
+
           with zipfile.ZipFile(io.BytesIO(payload)) as z:
               bad = z.testzip()
               if bad:
@@ -95,7 +138,7 @@ jobs:
           if tools.exists() and not any(tools.iterdir()):
               tools.rmdir()
 
-          print('Restored tested v2.4 package:', manifest['version'])
+          print('Restored tested v2.4 package:', manifest['version'], payload_hash)
           PY
 
       - name: Syntax and manifest checks

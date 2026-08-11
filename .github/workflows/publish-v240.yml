@@ -54,3 +54,5 @@ jobs:
           git add -A
           git commit -m "feat(v2.4): add cookie-aware sessions and unified company identity resolver"
           git push origin v2
+
+# diagnostic rerun 2

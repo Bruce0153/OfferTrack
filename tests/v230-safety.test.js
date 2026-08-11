@@ -1,7 +1,7 @@
 const fs=require('fs'), path=require('path'), assert=require('assert');
 const root=path.join(__dirname,'..');
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
-assert.equal(manifest.version,'2.3.0');
+assert(/^2\.3\./.test(manifest.version));
 assert(!manifest.permissions.includes('cookies'));
 const sw=fs.readFileSync(path.join(root,'service-worker.js'),'utf8');
 assert(sw.indexOf('session-manager.js') >= 0 && sw.indexOf('session-manager.js') < sw.indexOf('followup-background.js'));

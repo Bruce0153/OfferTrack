@@ -1,0 +1,56 @@
+name: OfferTrack v2.5 integration check
+
+on:
+  push:
+    branches:
+      - feature/v2.5
+    paths:
+      - '.github/workflows/v25-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v2.5
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply integration patch
+        run: python tools/v25-finalize.py
+      - name: Syntax checks
+        run: |
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+      - name: Full regression suite
+        run: |
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+      - name: Safety checks
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const m=require('./manifest.json');
+          if(m.version!=='2.5.0'||!m.permissions.includes('cookies')) throw new Error('manifest invariant failed');
+          const prod=fs.readdirSync('.').filter(x=>x.endsWith('.js')).map(x=>fs.readFileSync(x,'utf8')).join('\n');
+          if(/setInterval\s*\(/.test(prod)) throw new Error('setInterval forbidden');
+          if(/characterData\s*:\s*true/.test(prod)) throw new Error('characterData observer forbidden');
+          const cookie=fs.readFileSync('cookie-session.js','utf8');
+          if(/storage\.local\.set/.test(cookie)||/console\.(?:log|info|debug)/.test(cookie)) throw new Error('cookie privacy invariant failed');
+          const matcher=require('./application-matcher.js');
+          if(matcher.AUTO_UPDATE_MIN_CONFIDENCE < .85) throw new Error('match threshold too low');
+          const queue=require('./followup-queue.js');
+          if(queue.MAX_RETRIES > 4) throw new Error('retry budget too high');
+          console.log('OfferTrack v2.5 safety checks PASS');
+          NODE
+      - name: Commit verified source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(v2.5): integrate verified follow-up orchestrator"
+          git push origin feature/v2.5

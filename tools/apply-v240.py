@@ -26,47 +26,42 @@ HALF12A = 'e34f0299358fbe8a724de9c537cf64514937fecb56662d48eb0cb1eda7c46b42'
 HALF12B = '798a5273334c8cc62a28efb06d33708057a8443885841d32fe4d49b99b710e6d'
 PAYLOAD_SHA = '152fbd8923435698b5789fe71f043efa37a256871c8346d50b949f42a4fcfe71'
 
-
-def read_checked(name, expected):
+bad = []
+cache = {}
+for name, expected in EXPECTED.items():
     p = PAYLOAD_DIR / name
-    data = p.read_text(encoding='ascii').strip()
-    got = hashlib.sha256(data.encode('ascii')).hexdigest()
+    data = p.read_text(encoding='ascii').strip() if p.exists() else ''
+    got = hashlib.sha256(data.encode('ascii')).hexdigest() if data else 'MISSING'
+    cache[name] = data
+    print(f'{name}: len={len(data)} sha256={got} expected={expected}')
     if got != expected:
-        raise RuntimeError(f'payload chunk hash mismatch: {name}: {got}')
-    return data
+        bad.append(name)
 
-parts = [read_checked(f'{i:02d}.txt', EXPECTED[f'{i:02d}.txt']) for i in range(12)]
-raw12 = (PAYLOAD_DIR / '12.txt').read_text(encoding='ascii').strip()
-h12 = hashlib.sha256(raw12.encode('ascii')).hexdigest()
-if h12 == FULL12:
-    parts.append(raw12)
-elif h12 == HALF12A:
-    part_b = read_checked('12b.txt', HALF12B)
-    parts.append(raw12 + part_b)
-else:
-    raise RuntimeError(f'payload chunk hash mismatch: 12.txt: {h12}')
-parts.append(read_checked('13.txt', EXPECTED['13.txt']))
+raw12 = (PAYLOAD_DIR / '12.txt').read_text(encoding='ascii').strip() if (PAYLOAD_DIR/'12.txt').exists() else ''
+h12 = hashlib.sha256(raw12.encode('ascii')).hexdigest() if raw12 else 'MISSING'
+raw12b = (PAYLOAD_DIR / '12b.txt').read_text(encoding='ascii').strip() if (PAYLOAD_DIR/'12b.txt').exists() else ''
+h12b = hashlib.sha256(raw12b.encode('ascii')).hexdigest() if raw12b else 'MISSING'
+print(f'12.txt: len={len(raw12)} sha256={h12} full={FULL12} half={HALF12A}')
+print(f'12b.txt: len={len(raw12b)} sha256={h12b} expected={HALF12B}')
+if h12 not in {FULL12, HALF12A}:
+    bad.append('12.txt')
+if h12 == HALF12A and h12b != HALF12B:
+    bad.append('12b.txt')
+if bad:
+    raise RuntimeError('payload staging mismatch: ' + ', '.join(bad))
 
+parts = [cache[f'{i:02d}.txt'] for i in range(12)]
+parts.append(raw12 if h12 == FULL12 else raw12 + raw12b)
+parts.append(cache['13.txt'])
 payload = base64.b64decode(''.join(parts))
 if hashlib.sha256(payload).hexdigest() != PAYLOAD_SHA:
     raise RuntimeError('v2.4 payload SHA256 mismatch')
-
 with zipfile.ZipFile(io.BytesIO(payload)) as z:
     z.extractall(ROOT)
-
-# Remove files intentionally retired from the v2.4 repository/release surface.
 for rel in [
-    'INSTALL_EDGE.bat',
-    'PROVIDER_REGISTRY.md',
-    'SESSION_MANAGER.md',
-    'TEST_REPORT.md',
-    'V2_ROADMAP.md',
-    'tests/generic-company-quality.test.js',
-    'tests/message-routing-recovery.test.js',
-    'tests/v230-safety.test.js',
+    'INSTALL_EDGE.bat','PROVIDER_REGISTRY.md','SESSION_MANAGER.md','TEST_REPORT.md','V2_ROADMAP.md',
+    'tests/generic-company-quality.test.js','tests/message-routing-recovery.test.js','tests/v230-safety.test.js'
 ]:
-    p = ROOT / rel
-    if p.exists():
-        p.unlink()
-
+    p=ROOT/rel
+    if p.exists(): p.unlink()
 print('v2.4.0 exact tested payload applied and verified')

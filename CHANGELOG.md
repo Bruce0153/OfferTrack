@@ -1,12 +1,29 @@
 # Change Log
 
+## 2.3.0
+
+- 新增 Session Manager：按招聘域名持久化健康、需要登录、需要验证、访问受限和检查异常状态。
+- 新增会话熔断：登录失效默认冷却 12h，安全验证 2h，访问受限 6h；普通错误连续 3 次后冷却 1h。
+- 手动“立即跟进”和用户已经打开的招聘站点会绕过冷却主动复检，成功后自动恢复为健康。
+- 401/403 等 API 失败仍不直接判定掉登录；最终登录状态以页面明确证据为准。
+- 重构页面会话探针，拆分“验证码登录”和“安全/人机验证”，并独立识别 rate-limit。
+- 设置页新增招聘网站会话健康列表、打开需处理网站、清理会话记录。
+- Popup 新增会话健康摘要。
+- 新增会话问题首次出现通知，避免每一轮重复弹同一问题。
+- 不新增 `cookies` 权限，不保存 Cookie、Token、手机号、密码、验证码或响应正文。
+- 保留 v2.2.1 全部性能安全保护，不新增页面 MutationObserver 或高频 DOM 扫描。
+- 新增 Session Manager、Probe 分类、冷却恢复 E2E 和隐私/性能安全回归。
+
 ## 2.2.1
 
-- 移除 `content-ui.js` MutationObserver 自触发死循环。
-- 页面重扫忽略 OfferTrack 自身 DOM，取消 characterData 监听，并增加 4 秒最小扫描间隔。
-- Semantic Parser 改为按需执行，取消运行时消息 monkey-patch 和独立路由轮询。
-- 收紧 DOM、脚本、Structured State、MAIN-world Store 和 API JSON 扫描/复制预算。
-- Structured Extractor 增加相关对象门控，降低大型状态树临时对象分配。
+- 性能热修复：移除已被 `content.js` 原生悬浮 UI 取代的 `content-ui.js`，消除 MutationObserver 自触发死循环。
+- 页面 MutationObserver 不再监听 `characterData`，并忽略 OfferTrack 自己的 DOM 变化；自动重扫增加 4 秒最小间隔。
+- Semantic Parser 改为严格按需执行：取消页面加载时全量扫描、取消 700ms 路由轮询、取消对 `chrome.runtime.sendMessage` 的 monkey-patch。
+- 同一轮 Page Scan 只执行一次语义增强；Popup 和 Follow-up 不再重复发送 `ENHANCE_RECORDS`。
+- 收紧全 DOM、inline script、Structured State、MAIN-world Store 和 API JSON 的扫描/复制预算。
+- Application Data Extractor 增加对象相关性门控，避免对大型状态树中的每个对象都分配浅层字段快照。
+- `PAGE_SCAN_RESULT` 仅在页面结果发生变化或用户主动扫描时写入 storage，减少 Service Worker 与 `chrome.storage` 抖动。
+- 新增性能安全回归：旧 v2.2.0 UI 在 Chromium 合成页面中 8–12 秒内主线程失去响应；v2.2.1 在持续 50ms DOM mutation 下 14 秒 JS Heap 稳定约 1.91–1.94 MB。
 
 ## 2.2.0
 

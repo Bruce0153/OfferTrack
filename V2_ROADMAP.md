@@ -12,7 +12,7 @@
 - [x] v2.2 安全 GET API 发现与高置信采用
 - [x] v2.2 API → Structured State → Page Scan 三级降级
 - [x] v2.2 成功 API Hint 的本地安全缓存
-- [ ] v2.3 Session Manager / 登录健康检查
+- [x] v2.3 Session Manager / 登录健康检查与熔断恢复
 - [ ] v2.4 Job Queue、退避、错误冷却
 
 ## Phase 3 — 正确性与可观测性

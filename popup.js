@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('followUpNow').onclick = runFollowUpNow;
   await loadState();
   await loadFollowUpState();
+  await loadSessionHealth();
   await scan();
 });
 
@@ -148,10 +149,31 @@ async function runFollowUpNow() {
     setMessage('自动跟进任务已启动，可关闭插件窗口；任务会在后台继续运行。');
     await new Promise(resolve => setTimeout(resolve, 700));
     await loadFollowUpState();
+    await loadSessionHealth();
   } catch (e) {
     setMessage(e?.message || String(e), true);
   } finally {
     btn.disabled = false;
     btn.textContent = '立即跟进全部';
+  }
+}
+
+
+
+async function loadSessionHealth() {
+  const el = $('sessionMeta');
+  if (!el) return;
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'GET_SESSION_HEALTH' });
+    if (!res?.ok) throw new Error(res?.error || '读取失败');
+    const q = res.summary || {};
+    const problems = (q.loginRequired || 0) + (q.challenge || 0) + (q.rateLimited || 0) + (q.error || 0);
+    el.textContent = problems
+      ? `会话：${q.healthy || 0} 健康 · ${q.loginRequired || 0} 需登录 · ${(q.challenge || 0) + (q.rateLimited || 0)} 验证/受限 · ${q.error || 0} 异常`
+      : `会话：${q.healthy || 0} 个网站健康`;
+    el.classList.toggle('problem', problems > 0);
+  } catch {
+    el.textContent = '会话状态暂不可用';
+    el.classList.remove('problem');
   }
 }

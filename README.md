@@ -1,7 +1,6 @@
-# OfferTrack v2.2.1
+# OfferTrack v2.3.0
 
-
-> v2.2.1 是性能热修复版。若安装 v2.2.0 后出现招聘页面卡死或 Edge 内存持续上涨，请立即升级并在 `edge://extensions/` 重新加载扩展。
+> v2.3.0 在 v2.2.1 性能热修复基础上加入 Session Manager。自动跟进现在会记录招聘网站会话健康状态，并对登录失效、验证码和访问受限进行冷却与恢复管理。
 
 OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge 扩展。
 
@@ -21,7 +20,9 @@ OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge
 - 可选实验模式：后台逐个打开招聘网站页面检查，完成后自动关闭
 - 登录失效、页面无记录、匹配失败等情况写入飞书检查状态，不会覆盖已有招聘状态
 - 招聘状态变化时发送 Edge / 系统通知
-- v2.2 自动跟进优先使用 `API GET → Structured State → Page Scan` 三级降级
+- `API GET → Structured State → Page Scan` 三级降级
+- v2.3 招聘网站 Session Manager：健康 / 需登录 / 需验证 / 访问受限 / 检查异常
+- 登录失效和风控站点自动进入冷却期，避免每轮重复打开；手动立即跟进可主动复检恢复
 
 ## 安装
 
@@ -110,7 +111,7 @@ v2 自动跟进字段：
 `自动跟进` 默认留空时会参与自动检查；如果某条记录不希望自动检查，可手动填写 `关闭`、`否` 或 `不跟进`。
 
 
-## v2.2 Provider Strategy Executor
+## v2.2+ Provider Strategy Executor
 
 自动跟进现在不再直接跳到页面 DOM，而是按 Provider 能力依次尝试：
 
@@ -139,6 +140,23 @@ OfferTrack 会读取：
 如果前两层无法得到足够可信的投递记录，继续使用 v1/v2 已验证的 DOM + Semantic Parser。任何上层策略失败都不会阻断页面兜底。
 
 当前 Provider：Feishu Jobs、Moka、Beisen / Zhiye、Self-hosted SPA、Generic Web。
+
+
+## v2.3 Session Manager
+
+OfferTrack 不读取招聘网站 Cookie，也不保存手机号、密码或验证码，而是根据真实检查结果维护每个招聘域名的轻量会话健康状态：
+
+- 健康
+- 需要登录
+- 需要安全验证
+- 访问受限 / 请求频繁
+- 检查异常
+
+当自动任务确认某个站点需要登录、验证码或出现访问限制时，该站点会进入冷却期，后续 alarm 不再反复打开它。默认冷却：需要登录 12 小时、验证码 2 小时、访问受限 6 小时；连续 3 次普通检查异常后冷却 1 小时。
+
+恢复方式很简单：你重新登录/完成验证后，直接点击“立即跟进一次”；手动跟进会绕过冷却重新验证。若该招聘网站已经被你主动打开，自动任务也会允许重新检查。
+
+Session Manager 只在 `chrome.storage.local` 保存域名、Provider、状态、原因、检查时间、失败次数和冷却时间，不保存响应正文或认证凭据。设置页可以查看网站会话列表、打开第一个需要处理的网站，也可以清理这些健康记录；清理不会退出网站登录。
 
 ## 自动跟进
 
@@ -198,8 +216,8 @@ OfferTrack 会读取：
 
 ## V2 当前阶段
 
-v2.0.0 已完成自动化骨架；v2.1.0 增加 Provider Registry；v2.2.0 增加三级检查执行器：
+v2.0.0 已完成自动化骨架；v2.1.0 增加 Provider Registry；v2.2.x 增加三级检查执行器和性能热修；v2.3.0 增加 Session Manager：
 
 `Scheduler → 飞书任务 → Provider Registry → API GET → Structured State → Page Scan → 岗位匹配 → 状态 Diff → 飞书更新 → 通知`
 
-后续版本将继续加强 Session Manager、任务队列、状态机和诊断中心。详见 `V2_ROADMAP.md`。
+后续版本将继续加强任务队列、状态机和诊断中心。详见 `V2_ROADMAP.md`。

@@ -5,6 +5,7 @@
   const Providers = globalThis.OfferTrackProviderRegistry;
   const ApplicationData = globalThis.OfferTrackApplicationData;
   const Strategy = globalThis.OfferTrackFollowUpStrategy;
+  const Sessions = globalThis.OfferTrackSessionManager;
   const ALARM = 'offertrack-follow-up';
   const LEASE_MS = 20 * 60 * 1000;
   const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
@@ -18,6 +19,7 @@
       followUpMaxSitesPerRun: Math.min(30, Math.max(1, Number(input.followUpMaxSitesPerRun || 12))),
       followUpIncludeTerminal: !!input.followUpIncludeTerminal,
       followUpNotify: input.followUpNotify !== false,
+      followUpNotifySessionIssues: input.followUpNotifySessionIssues !== false,
       followUpApiFirst: input.followUpApiFirst !== false,
       followUpStructuredState: input.followUpStructuredState !== false,
       followUpApiTimeoutSeconds: Math.min(15, Math.max(3, Number(input.followUpApiTimeoutSeconds || 6))),
@@ -126,27 +128,38 @@
       totalRecords: targets.length, totalSites: allGroups.length, scheduledSites: groups.length,
       providers: Providers?.summarize ? Providers.summarize(allGroups) : [],
       strategyStats: {},
-      checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, details: []
+      checked: 0, changed: 0, failed: 0, loginRequired: 0, sessionBlocked: 0, waiting: 0, unmatched: 0, details: [], sessionIssues: []
     };
 
     for (const group of groups) {
-      const inspected = await inspectGroup(group, cfg).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
+      const inspected = await inspectGroup(group, cfg, source).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
       if (inspected?.strategy) result.strategyStats[inspected.strategy] = (result.strategyStats[inspected.strategy] || 0) + 1;
+      const sessionEvent = Sessions?.record ? await Sessions.record(group, inspected, source).catch(() => null) : null;
+      if (sessionEvent?.issue) result.sessionIssues.push({ host: group.host, provider: group.providerName || group.provider?.name || '', state: sessionEvent.entry?.state || '', label: sessionEvent.entry?.label || '', reason: sessionEvent.entry?.reason || '', url: sessionEvent.entry?.lastUrl || group.url });
       const patchResult = await applyGroupResult(settings, token, group, inspected);
-      for (const k of ['checked','changed','failed','loginRequired','waiting','unmatched']) result[k] += patchResult[k] || 0;
+      for (const k of ['checked','changed','failed','loginRequired','sessionBlocked','waiting','unmatched']) result[k] += patchResult[k] || 0;
       if (patchResult.detail) result.details.push(patchResult.detail);
       await sleep(250);
     }
 
     if (allGroups.length > groups.length) result.details.push({ host: '', status: 'limited', message: `本轮按设置只检查前 ${groups.length}/${allGroups.length} 个招聘网站` });
-    result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，失败 ${result.failed}`;
+    result.sessionHealth = Sessions?.state ? (await Sessions.state().catch(() => null))?.summary || null : null;
+    result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，需验证/受限 ${result.sessionBlocked}，失败 ${result.failed}`;
     await chrome.storage.local.set({ lastFollowUp: result });
     if (cfg.followUpNotify && result.changed > 0) await notifyChanges(result);
+    if (cfg.followUpNotifySessionIssues && result.sessionIssues.length) await notifySessionIssues(result);
     await configure(settings);
     return result;
   }
 
-  async function inspectGroup(group, cfg) {
+  async function inspectGroup(group, cfg, source = 'manual') {
+    let tab = await findBestOpenTab(group);
+    const sessionDecision = Sessions?.shouldSkip ? await Sessions.shouldSkip(group, { source, hasOpenTab: !!tab }).catch(() => ({ skip: false })) : { skip: false };
+    if (sessionDecision?.skip) {
+      return { host: group.host, provider: group.provider, status: 'session_paused', sessionState: sessionDecision.state, error: `${sessionDecision.label || '会话异常'}，已暂停自动重试至 ${formatLocalTime(sessionDecision.cooldownUntil)}`, records: [], page: { url: group.url } };
+    }
+
+    // 1) 若之前已经学到过“安全、无敏感参数、且成功返回投递数据”的 GET API，先尝试无页面检查。
     if (cfg.followUpApiFirst && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
       const cached = await loadApiHints(group);
       if (cached.length) {
@@ -155,7 +168,6 @@
       }
     }
 
-    let tab = await findBestOpenTab(group);
     let createdTab = false;
     if (!tab && cfg.followUpMode === 'background_tabs') {
       tab = await chrome.tabs.create({ url: group.url, active: false });
@@ -171,38 +183,55 @@
         return { host: group.host, provider: group.provider, status: 'login', error: '招聘网站登录状态已失效', records: [], page: { url: finalUrl } };
       }
 
+      const earlyProbe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
+      if (earlyProbe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', error: earlyProbe.reason || '招聘网站要求重新登录', records: [], page: { url: finalUrl } };
+      if (earlyProbe?.rateLimited) return { host: group.host, provider: group.provider, status: 'rate_limited', error: earlyProbe.reason || '招聘网站暂时限制访问', records: [], page: { url: finalUrl } };
+      if (earlyProbe?.challenge) return { host: group.host, provider: group.provider, status: 'challenge', error: earlyProbe.reason || '招聘网站要求安全验证', records: [], page: { url: finalUrl } };
+
+      // 2) 先只收集“只读探针”：页面 JSON script + Resource Timing URL，不执行页面代码、不读取 Cookie。
       const strategyProbe = await collectStrategyProbe(tab.id);
 
+      // 3) API GET：只尝试同源、明显属于投递/申请查询、且不含 create/update/delete/withdraw 等动作词的 URL。
       if (cfg.followUpApiFirst && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
         const apiResult = await tryApiCandidates(group, cfg, strategyProbe?.resources || [], finalUrl, false);
         if (apiResult?.status === 'ok') return apiResult;
       }
 
+      // 4) Structured State：读取 script JSON 与少量 MAIN-world 常见 SSR/Store 全局变量；全部做有界净化，不 eval。
       if (cfg.followUpStructuredState && group.capabilities?.structuredState && group.strategies?.includes('structured_state') && ApplicationData?.extractRecords) {
+        // First use compact JSON already present in the DOM. Only enter MAIN world if that evidence is insufficient.
+        // This avoids cloning large framework stores on every check.
         const domSnapshots = (strategyProbe?.jsonSnapshots || []).map(x => x?.data).filter(x => x != null).slice(0, 12);
         let structuredRecords = [];
         if (domSnapshots.length) {
           structuredRecords = ApplicationData.extractRecords(domSnapshots, group.records, { maxNodes: 2800, maxDepth: 7 });
           const records = enrichStrategyRecords(structuredRecords, group, finalUrl);
           const useful = Strategy?.isUseful ? Strategy.isUseful(group.records, records, Core, 0.8) : { ok: records.length > 0 };
-          if (useful.ok) return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'dom-json' } };
+          if (useful.ok) {
+            return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'dom-json' } };
+          }
         }
+
         const mainSnapshots = await collectMainWorldSnapshot(tab.id);
         if (mainSnapshots.length) {
           const mainRecords = ApplicationData.extractRecords(mainSnapshots.map(x => x.data).filter(Boolean), group.records, { maxNodes: 2200, maxDepth: 6 });
           const records = enrichStrategyRecords([...structuredRecords, ...mainRecords], group, finalUrl);
           const useful = Strategy?.isUseful ? Strategy.isUseful(group.records, records, Core, 0.8) : { ok: records.length > 0 };
-          if (useful.ok) return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'main-world' } };
+          if (useful.ok) {
+            return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'main-world' } };
+          }
         }
       }
 
+      // 5) 最后才使用现有 DOM/Semantic Parser，保证 v2.0/v2.1 的能力始终是兜底。
       const scan = await scanTab(tab.id, createdTab ? 4 : 2, createdTab);
       if (!scan?.ok) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
       const records = Array.isArray(scan.records) ? scan.records : [];
       if (!records.length) {
         const probe = await chrome.tabs.sendMessage(tab.id, { type: 'PROBE_PAGE' }).catch(() => null);
-        if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', strategy: 'page_scan', error: '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
-        if (probe?.blocked) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: '页面出现验证码或访问限制', records: [], page: scan.page || { url: finalUrl } };
+        if (probe?.loginRequired) return { host: group.host, provider: group.provider, status: 'login', strategy: 'page_scan', error: probe.reason || '页面要求重新登录', records: [], page: scan.page || { url: finalUrl } };
+        if (probe?.rateLimited) return { host: group.host, provider: group.provider, status: 'rate_limited', strategy: 'page_scan', error: probe.reason || '页面提示访问频繁或受限', records: [], page: scan.page || { url: finalUrl } };
+        if (probe?.challenge) return { host: group.host, provider: group.provider, status: 'challenge', strategy: 'page_scan', error: probe.reason || '页面要求安全验证', records: [], page: scan.page || { url: finalUrl } };
         return { host: group.host, provider: group.provider, status: 'empty', strategy: 'page_scan', error: '页面已打开，但没有解析到投递记录', records: [], page: scan.page || { url: finalUrl } };
       }
       return { host: group.host, provider: group.provider, status: 'ok', strategy: 'page_scan', records, page: scan.page || { url: finalUrl } };
@@ -389,10 +418,15 @@
   async function applyGroupResult(settings, token, group, inspected) {
     const now = new Date().toLocaleString('zh-CN', { hour12: false });
     const patches = [];
-    const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, waiting: 0, unmatched: 0, detail: null };
+    const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, sessionBlocked: 0, waiting: 0, unmatched: 0, detail: null };
     const common = { '最后检查时间': now, '招聘系统': group.providerName || group.provider?.name || 'Generic Web', '检查方式': inspected?.strategy ? (Strategy?.strategyLabel ? Strategy.strategyLabel(inspected.strategy) : inspected.strategy) : '' };
 
-    if (inspected.status === 'waiting') {
+    if (inspected.status === 'session_paused') {
+      const loginText = inspected.sessionState === 'login_required' ? '已失效' : inspected.sessionState === 'challenge' ? '需验证' : inspected.sessionState === 'rate_limited' ? '访问受限' : '未知';
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '会话暂停', '登录状态': loginText, '最近错误': safeCell(inspected.error || '', 500) } });
+      summary.waiting = group.records.length;
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'session_paused', message: inspected.error };
+    } else if (inspected.status === 'waiting') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '等待打开招聘网站', '登录状态': '未知', '最近错误': inspected.error || '' } });
       summary.waiting = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'waiting', message: inspected.error };
@@ -400,6 +434,12 @@
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '需要登录', '登录状态': '已失效', '最近错误': inspected.error || '' } });
       summary.loginRequired = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'login', message: inspected.error };
+    } else if (inspected.status === 'challenge' || inspected.status === 'rate_limited') {
+      const loginText = inspected.status === 'challenge' ? '需验证' : '访问受限';
+      const checkText = inspected.status === 'challenge' ? '需要安全验证' : '访问暂时受限';
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': checkText, '登录状态': loginText, '最近错误': safeCell(inspected.error || '', 500) } });
+      summary.sessionBlocked = group.records.length;
+      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: inspected.status, message: inspected.error };
     } else if (inspected.status === 'error') {
       for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '检查失败', '登录状态': '未知', '最近错误': safeCell(inspected.error, 500) } });
       summary.failed = group.records.length;
@@ -445,6 +485,22 @@
       );
     }
     return summary;
+  }
+
+  function formatLocalTime(ts) {
+    if (!ts) return '稍后';
+    try { return new Date(Number(ts)).toLocaleString('zh-CN', { hour12: false }); }
+    catch { return '稍后'; }
+  }
+
+  async function notifySessionIssues(result) {
+    if (!chrome.notifications || !result?.sessionIssues?.length) return;
+    const issues = result.sessionIssues.slice(0, 3);
+    const message = issues.map(x => `${x.host}：${x.label || '会话异常'}${x.reason ? `（${x.reason}）` : ''}`).join('\n');
+    await chrome.notifications.create(`offertrack-session-${Date.now()}`, {
+      type: 'basic', iconUrl: 'icons/icon128.png', title: `OfferTrack：${result.sessionIssues.length} 个招聘网站需要处理`, message,
+      contextMessage: '重新登录或完成验证后，可手动立即跟进以恢复自动检查'
+    }).catch(() => {});
   }
 
   async function notifyChanges(result) {

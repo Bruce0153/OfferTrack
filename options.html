@@ -49,10 +49,16 @@
       <label class="check"><input id="followUpApiFirst" type="checkbox" /> 优先尝试安全 GET API <span>（仅同源、只读查询；失败自动降级）</span></label>
       <label class="check"><input id="followUpStructuredState" type="checkbox" /> 读取页面 Structured State <span>（JSON / SSR Store；不执行远程代码）</span></label>
       <label class="check"><input id="followUpNotify" type="checkbox" /> 招聘状态发生变化时发送系统通知</label>
+      <label class="check"><input id="followUpNotifySessionIssues" type="checkbox" /> 登录失效、验证码或访问受限首次出现时提醒</label>
       <label class="check"><input id="followUpIncludeTerminal" type="checkbox" /> 继续检查 Offer / 已结束 / 已撤回记录</label>
-      <p class="hint">v2.2 按 API GET → Structured State → Page Scan 三级策略检查。API 只尝试同源、明确属于投递查询且不含提交/撤回/修改等动作的 GET 地址；只有高置信匹配当前飞书岗位时才采用结果。失败会自动降级，不会覆盖原状态。实验后台标签页模式仍只复用 Edge 已有登录会话。</p>
+      <p class="hint">v2.3 在 API GET → Structured State → Page Scan 三级策略之外增加招聘网站会话健康管理。登录失效、验证码和访问受限会进入冷却期，避免每轮重复打开网站；手动“立即跟进”或你已经重新打开该网站时会主动复检并恢复。插件仍不读取或保存 Cookie、手机号、密码。</p>
       <div class="buttons"><button id="runFollowUp" class="primary">立即跟进一次</button><button id="refreshFollowUp">刷新运行状态</button></div>
       <div id="followUpStatus" class="status"></div>
+      <div class="session-health">
+        <div class="session-head"><strong>招聘网站会话</strong><span id="sessionSummary">读取中…</span></div>
+        <div id="sessionList" class="session-list"></div>
+        <div class="buttons session-actions"><button id="refreshSessions">刷新会话状态</button><button id="openSessionProblem">打开需处理网站</button><button id="clearSessions">清理会话记录</button></div>
+      </div>
     </section>
 
 
@@ -77,4 +83,8 @@
     </section>
 
     <div class="bottom"><button id="save" class="primary big">保存设置</button><span id="saveMsg"></span></div>
-    <section class="privacy">隐私：插件不会保存��� f9�dy��z-)�c��k�� x� ��b�b�9d#9�ix� zhmzgh�!�b�9d#9�iyd�9/h9..�b�9o 9d+��8�':!�b�:-��/���'y/&����)����9��������9��y⭹� ya�yaiy/h:acy�k��:h�.i�i&���:(j9�/;�&�k��j�9d#�c�9�!��o�hmy�(yo#�c�i#y�*Y�H9od�bcym칧"y�9�n�oey/&�+�x� ���X�[ۏ���XZ[����ܚ\ܘ�H��[ۜ˚�ȏ���ܚ\��؛�O���[�
+    <section class="privacy">隐私：插件不会保存招聘网站账号密码、Cookie 或验证码。会话管理只记录招聘网站域名、健康状态、失败原因和检查时间；自动跟进继续复用 Edge 当前已有的登录会话。</section>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

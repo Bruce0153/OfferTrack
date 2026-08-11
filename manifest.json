@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OfferTrack - 秋招投递助手",
-  "version": "2.2.1",
-  "description": "自动识别并同步招聘投递记录；提供轻量页面解析、Provider Registry 与 API/Structured State/Page Scan 三级自动跟进。",
+  "version": "2.3.0",
+  "description": "自动识别并同步招聘投递记录；支持招聘网站会话健康管理、熔断恢复、Provider Registry 与三级自动跟进。",
   "permissions": [
     "storage",
     "activeTab",
@@ -50,5 +50,5 @@
       "run_at": "document_idle"
     }
   ],
-  "version_name": "2.2.1"
+  "version_name": "2.3.0"
 }

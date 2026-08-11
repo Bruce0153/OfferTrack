@@ -15,6 +15,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('deleteAlias').onclick = deleteAlias;
   $('runFollowUp').onclick = runFollowUp;
   $('refreshFollowUp').onclick = refreshFollowUpState;
+  $('refreshSessions').onclick = refreshSessionHealth;
+  $('openSessionProblem').onclick = openSessionProblem;
+  $('clearSessions').onclick = clearSessionHealth;
   $('baseUrl').addEventListener('input', () => {
     const current = $('baseUrl').value.trim();
     if (current !== (settings.baseUrl || '')) {
@@ -23,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   await refreshFollowUpState();
+  await refreshSessionHealth();
 });
 
 function fill() {
@@ -36,6 +40,7 @@ function fill() {
   $('followUpApiFirst').checked = settings.followUpApiFirst !== false;
   $('followUpStructuredState').checked = settings.followUpStructuredState !== false;
   $('followUpNotify').checked = settings.followUpNotify !== false;
+  $('followUpNotifySessionIssues').checked = settings.followUpNotifySessionIssues !== false;
   $('followUpIncludeTerminal').checked = !!settings.followUpIncludeTerminal;
 }
 
@@ -57,6 +62,7 @@ function collect() {
     followUpStructuredState: $('followUpStructuredState').checked,
     followUpApiTimeoutSeconds: Number(settings.followUpApiTimeoutSeconds || 6),
     followUpNotify: $('followUpNotify').checked,
+    followUpNotifySessionIssues: $('followUpNotifySessionIssues').checked,
     followUpIncludeTerminal: $('followUpIncludeTerminal').checked,
     followUpTabTimeoutSeconds: Number(settings.followUpTabTimeoutSeconds || 25),
     customSites: settings.customSites || {},
@@ -222,4 +228,71 @@ function fmtTime(ts) {
 function setFollowUpStatus(text, error=false) {
   $('followUpStatus').textContent = text || '';
   $('followUpStatus').style.color = error ? '#c94646' : '#647085';
+}
+
+
+async function refreshSessionHealth() {
+  const summaryEl = $('sessionSummary');
+  const listEl = $('sessionList');
+  summaryEl.textContent = '读取中…';
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'GET_SESSION_HEALTH' });
+    if (!res?.ok) throw new Error(res?.error || '无法读取会话状态');
+    const q = res.summary || {};
+    summaryEl.textContent = `健康 ${q.healthy || 0} · 需登录 ${q.loginRequired || 0} · 验证/受限 ${(q.challenge || 0) + (q.rateLimited || 0)} · 异常 ${q.error || 0}`;
+    renderSessionList(res.entries || []);
+  } catch (e) {
+    summaryEl.textContent = '读取失败';
+    listEl.innerHTML = `<div class="hint">${escapeHtml2(e?.message || String(e))}</div>`;
+  }
+}
+
+function renderSessionList(entries) {
+  const root = $('sessionList');
+  root.innerHTML = '';
+  const visible = (entries || []).slice(0, 8);
+  if (!visible.length) {
+    root.innerHTML = '<div class="hint">尚无会话检查记录。运行一次自动跟进后会在这里显示。</div>';
+    return;
+  }
+  for (const e of visible) {
+    const row = document.createElement('div');
+    row.className = 'session-row';
+    const bad = e.state === 'login_required' || e.state === 'error';
+    const warn = e.state === 'challenge' || e.state === 'rate_limited';
+    const cls = e.state === 'healthy' ? 'ok' : bad ? 'bad' : warn ? 'warn' : '';
+    const sub = [e.providerName, e.reason, e.lastCheckedAt ? fmtTime(e.lastCheckedAt) : ''].filter(Boolean).join(' · ');
+    row.innerHTML = `<div><b>${escapeHtml2(e.host || '')}</b><small>${escapeHtml2(sub)}</small></div><span class="session-tag ${cls}">${escapeHtml2(e.label || e.state || '未知')}</span>`;
+    root.appendChild(row);
+  }
+}
+
+async function openSessionProblem() {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'GET_SESSION_HEALTH' });
+    const entry = (res?.entries || []).find(e => ['login_required','challenge','rate_limited'].includes(e.state));
+    if (!entry) return setFollowUpStatus('当前没有需要重新登录或验证的网站。');
+    const url = entry.lastUrl || `https://${entry.host}/`;
+    await chrome.tabs.create({ url, active: true });
+    setFollowUpStatus(`已打开 ${entry.host}。完成登录/验证后，点击“立即跟进一次”即可立即恢复检查。`);
+  } catch (e) {
+    setFollowUpStatus(e?.message || String(e), true);
+  }
+}
+
+async function clearSessionHealth() {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'CLEAR_SESSION_HEALTH' });
+    if (!res?.ok) throw new Error(res?.error || '清理失败');
+    renderSessionList(res.entries || []);
+    const q = res.summary || {};
+    $('sessionSummary').textContent = `健康 ${q.healthy || 0} · 需登录 ${q.loginRequired || 0} · 验证/受限 ${(q.challenge || 0) + (q.rateLimited || 0)} · 异常 ${q.error || 0}`;
+    setFollowUpStatus('会话健康记录已清理；不会清除浏览器登录状态。');
+  } catch (e) {
+    setFollowUpStatus(e?.message || String(e), true);
+  }
+}
+
+function escapeHtml2(v) {
+  return String(v || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 }

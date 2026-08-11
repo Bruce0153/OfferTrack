@@ -20,20 +20,39 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install exact v2.3 payload
+      - name: Rebuild exact tested payload
         run: |
-          base64 -d tools/v230-payload.b64 > /tmp/v230-payload.tar.gz
+          cat \
+            tools/v230-payload.part00 \
+            tools/v230-payload.part01 \
+            tools/v230-payload.part02 \
+            tools/v230-payload.part03a \
+            tools/v230-payload.part03b \
+            tools/v230-payload.part04a \
+            tools/v230-payload.part04b \
+            | base64 -d > /tmp/v230-payload.tar.gz
+          echo "12a64e67316ac32fe6ddc67be160e7f71d6bba9d83811397e691cff29da3cf14  /tmp/v230-payload.tar.gz" | sha256sum -c -
           tar -xzf /tmp/v230-payload.tar.gz -C .
-      - name: Syntax and regression tests
+      - name: Syntax and full regression tests
         run: |
           for f in *.js; do node --check "$f"; done
           for t in tests/*.test.js; do node "$t"; done
           python -m json.tool manifest.json >/dev/null
+      - name: Verify v2.3 safety invariants
+        run: |
+          node -e "const m=require('./manifest.json'); if(m.version!=='2.3.0') process.exit(1); if((m.permissions||[]).includes('cookies')) process.exit(2)"
+          grep -q "session-manager.js" service-worker.js
+          grep -q "AUTO_SCAN_MIN_GAP = 4000" content.js
+          ! grep -q "setInterval" semantic.js
       - name: Commit v2.3.0
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f tools/v230-core.patch tools/v230-ui.patch tools/v230-docs-tests.patch tools/v230-payload.b64 tools/v230-ready.txt
+          rm -f \
+            tools/v230-core.patch tools/v230-ui.patch tools/v230-docs-tests.patch \
+            tools/v230-payload.b64 tools/v230-payload.part00 tools/v230-payload.part01 \
+            tools/v230-payload.part02 tools/v230-payload.part03a tools/v230-payload.part03b \
+            tools/v230-payload.part04a tools/v230-payload.part04b tools/v230-ready.txt
           rm -f .github/workflows/publish-v230.yml
           git add -A
           git commit -m "feat(v2.3): add session health manager and cooldown recovery"

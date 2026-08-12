@@ -30,7 +30,7 @@ for (const type of ['GET_FOLLOWUP_SUMMARY','GET_FOLLOWUP_ACTIONS','OPEN_FOLLOWUP
 assert.ok(lite.includes('active: true'), 'explicit user login action should be able to open a visible page');
 assert.ok(lite.includes('userConfirmed: true'), 'review confirmation must still go through state machine');
 
-assert.ok(options.includes('Cookie 会话证据 → 安全 GET API → 页面 Structured State → Page Scan'));
+assert.ok(options.includes('Cookie 会话证据 → 安全 GET API → Structured State → Page Scan'));
 assert.ok(!/id="followUp(?:CookiePreflight|ApiFirst|StructuredState)"/.test(options), 'low-level switches must stay hidden');
 assert.ok(popup.includes('followUpActions'), 'popup actionable entry missing');
 assert.ok(Review.MAX_ENTRIES <= 30 && Review.TTL_MS <= 14 * 24 * 60 * 60 * 1000, 'review store too large');

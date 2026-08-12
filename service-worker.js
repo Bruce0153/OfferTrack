@@ -1,4 +1,6 @@
 importScripts(
+  'company-identity.js',
+  'cookie-session.js',
   'background.js',
   'followup-core.js',
   'provider-registry.js',
@@ -8,8 +10,8 @@ importScripts(
   'application-matcher.js',
   'status-state-machine.js',
   'change-journal.js',
+  'followup-review.js',
   'followup-queue.js',
-  'cookie-session.js',
   'v25-orchestrator.js',
   'followup-background.js'
 );

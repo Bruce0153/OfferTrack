@@ -1,7 +1,9 @@
 const fs=require('fs'), path=require('path'), assert=require('assert');
 const root=path.join(__dirname,'..');
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
-const scripts=manifest.content_scripts.flatMap(x=>x.js||[]);
+const contentScripts=Array.isArray(manifest.content_scripts)?manifest.content_scripts:[];
+const scripts=contentScripts.flatMap(x=>x.js||[]);
+assert(!contentScripts.some(x=>(x.matches||[]).includes('https://*/*')), 'global HTTPS content-script injection is forbidden');
 assert(!scripts.includes('content-ui.js'));
 assert(!fs.existsSync(path.join(root,'content-ui.js')));
 const content=fs.readFileSync(path.join(root,'content.js'),'utf8');
@@ -16,4 +18,5 @@ const probe=fs.readFileSync(path.join(root,'strategy-probe.js'),'utf8');
 assert(/budget=450_000/.test(probe));
 const bg=fs.readFileSync(path.join(root,'followup-background.js'),'utf8');
 assert(/nodes\+\+ > 1400/.test(bg));
-console.log('OfferTrack v2.2.1 performance safety guards: PASS');
+assert(!/chrome\.tabs\.query\(\{\}\)/.test(bg), 'unscoped tab query is forbidden');
+console.log('OfferTrack v2.6 performance safety guards: PASS');

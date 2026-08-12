@@ -25,9 +25,10 @@
     return s in ORDER || TERMINAL.has(s) ? s : '';
   }
 
-  function terminalEvidence(newStatus, rawStatus, confidence = 0) {
+  function terminalEvidence(newStatus, rawStatus, confidence = 0, userConfirmed = false) {
     const next = normalize(newStatus);
     const raw = clean(rawStatus);
+    if (userConfirmed && confidence >= 0.86) return { strong: true, reason: 'user_confirmed_terminal_transition' };
     if (confidence < 0.90) return { strong: false, reason: 'match_confidence_below_terminal_threshold' };
     if (next === '已撤回') return { strong: STRONG_WITHDRAWN_RE.test(raw), reason: STRONG_WITHDRAWN_RE.test(raw) ? 'explicit_withdrawn_evidence' : 'withdrawn_without_explicit_evidence' };
     if (next === '已结束') return { strong: STRONG_ENDED_RE.test(raw), reason: STRONG_ENDED_RE.test(raw) ? 'explicit_ended_evidence' : 'ended_without_explicit_evidence' };
@@ -47,7 +48,7 @@
     if (TERMINAL.has(from)) return { changed: true, allowed: false, from, to, reason: 'terminal_status_is_sticky' };
 
     if (TERMINAL.has(to)) {
-      const terminal = terminalEvidence(to, rawStatus, confidence);
+      const terminal = terminalEvidence(to, rawStatus, confidence, !!evidence.userConfirmed);
       return { changed: true, allowed: terminal.strong, from, to, reason: terminal.reason, terminalEvidence: terminal.strong };
     }
 

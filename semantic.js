@@ -15,6 +15,11 @@
   const POSITION_NOISE_RE = /(跟进应聘进度|查询暂存投递记录|暂存投递记录|查看(?:我的)?(?:应聘|申请|投递)(?:记录|进度)?|查询(?:应聘|申请|投递)(?:记录|进度)?|管理(?:我的)?(?:申请|投递)|完善简历|修改简历|编辑简历|我的简历|职位搜索|岗位搜索|职位推荐|岗位推荐|相关职位|相关岗位|更多职位|更多岗位|投递记录|申请记录|应聘记录|候选人中心|个人中心|返回首页|招聘首页|招聘职位|社会招聘|校园招聘|实习招聘|人才项目)/i;
   const SENTENCE_HINT_RE = /(点击|查询|查看|跟进|管理|完善|修改|请|您|可在|用于|了解|获取|关注|操作|进入|跳转|暂存|记录)/;
   const STATUS_RE = /(已投递|投递成功|申请成功|筛选中|评估中|待测评|测评中|笔试中|待面试|面试中|已结束|未通过|不通过|淘汰|已录用|offer)/i;
+  const ACCOUNT_UI_TEXT_RE = /(?:个人资料|个人信息|我的资料|个人主页|个人中心|用户中心|账号(?:设置|信息|管理)?|账户(?:设置|信息|管理)?|候选人中心|退出登录|退出账号|修改密码|安全中心)/i;
+  const ACCOUNT_UI_CONTEXT_RE = /(?:^|[\s_-])(?:profile|account|avatar|user[-_]?info|user[-_]?menu|personal|member[-_]?center|candidate[-_]?menu)(?:$|[\s_-])/i;
+  const PAGE_STATUS_EXACT_RE = /^(?:投递简历|简历投递|已投递|投递成功|已申请|申请成功|简历筛选|简历初筛|简历评估|待筛选|筛选中|评估中|待评估|测评|待测评|测评中|测评完成|笔试|待笔试|笔试中|笔试完成|面试|待面试|面试中|面试安排|一面|二面|三面|四面|HR面|终面|已发\s*offer|offer已发放|已录用|录用|意向书|不合适|不通过|未通过|流程结束|已结束|已拒绝|淘汰|已撤回|撤回成功|已终止)$/i;
+  const PAGE_STATUS_DATE_RE = /(20\d{2})[-\/.年](1[0-2]|0?[1-9])[-\/.月](3[01]|[12]\d|0?[1-9])日?(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/;
+  const STATUS_RANK = Object.freeze({ '已投递': 1, '筛选中': 2, '笔试/测评': 3, '面试中': 4, 'Offer': 5 });
 
   const MAX_SCRIPT_CHARS = 900_000;
   let cache = null;
@@ -36,7 +41,7 @@
     s = s.replace(/^[·•|｜\-—–\s]+|[·•|｜\-—–\s]+$/g, '');
     if (!s || COMPANY_NOISE_RE.test(s)) return '';
     if (/^[\d*+()\-\s]{4,}$/.test(s) || /\*{2,}/.test(s)) return '';
-    if (STATUS_RE.test(s) || POSITION_NOISE_RE.test(s)) return '';
+    if (STATUS_RE.test(s) || POSITION_NOISE_RE.test(s) || ACCOUNT_UI_TEXT_RE.test(s)) return '';
     if (/(投递|申请|应聘|岗位|职位|个人中心|候选人|详情|收藏|流程)/.test(s)) return '';
     if (STRONG_ROLE_RE.test(s) && s.length > 24) return '';
 
@@ -248,16 +253,40 @@
     for (const el of [...document.querySelectorAll(positionAttrs.map(x => `[${x}]`).join(','))].slice(0, 300)) for (const attr of positionAttrs) if (el.getAttribute(attr)) addPosition(el.getAttribute(attr), 'declared-dom', attr);
   }
 
+  function isAccountUiElement(el) {
+    if (!el) return false;
+    const ownText = cleanText(el.innerText || el.textContent || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').slice(0, 160);
+    if (ACCOUNT_UI_TEXT_RE.test(ownText)) return true;
+    const parts = [];
+    let cur = el;
+    for (let i = 0; cur && i < 4; i++, cur = cur.parentElement) {
+      parts.push(String(cur.className || ''));
+      parts.push(cur.id || '');
+      parts.push(cur.getAttribute?.('aria-label') || '');
+      parts.push(cur.getAttribute?.('title') || '');
+      parts.push(cur.getAttribute?.('data-testid') || '');
+      parts.push(cur.getAttribute?.('href') || '');
+    }
+    const ctx = parts.join(' ').toLowerCase();
+    if (ACCOUNT_UI_CONTEXT_RE.test(ctx)) return true;
+    return /\/(?:profile|account|personal|user\/(?:profile|center)|candidate\/(?:profile|center))(?:[/?#]|$)/i.test(ctx);
+  }
+
   function collectVisibleBrand(addCompany) {
     const selectors = ['header [class*="brand"]','header [class*="logo"]','nav [class*="brand"]','nav [class*="logo"]','[class*="header"] [class*="brand"]','[class*="header"] [class*="logo"]','header img[alt]','[class*="logo"] img[alt]','img[class*="logo"][alt]'];
-    for (const selector of selectors) for (const el of [...document.querySelectorAll(selector)].slice(0, 120)) addCompany(el.innerText || el.alt || el.getAttribute?.('aria-label') || el.getAttribute?.('title'), 'header-brand', selector);
+    for (const selector of selectors) {
+      for (const el of [...document.querySelectorAll(selector)].slice(0, 120)) {
+        if (isAccountUiElement(el)) continue;
+        addCompany(el.innerText || el.alt || el.getAttribute?.('aria-label') || el.getAttribute?.('title'), 'header-brand', selector);
+      }
+    }
     const title = cleanText(document.title);
     for (const p of [title, ...title.split(/[-_|｜·—–]/)]) addCompany(p, 'meta-title', 'document.title');
 
     const brandNodes = document.querySelectorAll('body *');
     for (let i = 0, n = Math.min(brandNodes.length, 900); i < n; i++) {
       const el = brandNodes[i];
-      if (!visible(el)) continue;
+      if (!visible(el) || isAccountUiElement(el)) continue;
       const rect = safeRect(el);
       if (rect.top < -5 || rect.top > 125 || rect.left < -5 || rect.left > Math.min(650, innerWidth * .48)) continue;
       const text = cleanText(el.innerText || el.textContent || '');
@@ -289,6 +318,90 @@
     }
   }
 
+  function parsePageStatus(value) {
+    let raw = cleanText(value || '');
+    if (!raw || raw.length > 80) return null;
+    raw = raw.replace(/^(?:当前状态|投递状态|申请状态|应聘状态|状态|进度)\s*[：:]?\s*/i, '').trim();
+    const date = parseStatusDate(raw);
+    if (date?.raw) raw = cleanText(raw.replace(date.raw, ''));
+    if (!PAGE_STATUS_EXACT_RE.test(raw)) return null;
+    const compact = raw.replace(/\s+/g, '');
+    if (/撤回/.test(compact)) return { raw, status: '已撤回', terminal: true, rank: 90 };
+    if (/不合适|不通过|未通过|流程结束|已结束|已拒绝|淘汰|已终止/.test(compact)) return { raw, status: '已结束', terminal: true, rank: 90 };
+    if (/已发offer|offer已发放|已录用|录用|意向书/i.test(compact)) return { raw, status: 'Offer', terminal: false, rank: STATUS_RANK.Offer };
+    if (/面试|一面|二面|三面|四面|hr面|终面|待面试/i.test(compact)) return { raw, status: '面试中', terminal: false, rank: STATUS_RANK['面试中'] };
+    if (/笔试|测评/.test(compact)) return { raw, status: '笔试/测评', terminal: false, rank: STATUS_RANK['笔试/测评'] };
+    if (/筛选|评估/.test(compact)) return { raw, status: '筛选中', terminal: false, rank: STATUS_RANK['筛选中'] };
+    if (/投递|申请/.test(compact)) return { raw, status: '已投递', terminal: false, rank: STATUS_RANK['已投递'] };
+    return null;
+  }
+
+  function parseStatusDate(value) {
+    const m = cleanText(value || '').match(PAGE_STATUS_DATE_RE);
+    if (!m) return null;
+    const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
+    const hour = Number(m[4] || 0), minute = Number(m[5] || 0), second = Number(m[6] || 0);
+    const stamp = Date.UTC(year, month - 1, day, hour, minute, second);
+    if (!Number.isFinite(stamp)) return null;
+    return { raw: m[0], stamp };
+  }
+
+  function inferLatestStatusFromPage() {
+    const body = String(document.body?.innerText || '').slice(0, 120000);
+    if (!body) return null;
+    const lines = body.replace(/\r/g, '').split(/\n+/).map(cleanText).filter(Boolean).slice(0, 4000);
+    const pairs = [];
+    for (let i = 0; i < lines.length; i++) {
+      const status = parsePageStatus(lines[i]);
+      if (!status) continue;
+      let date = parseStatusDate(lines[i]);
+      let dateIndex = i;
+      if (!date) {
+        for (let j = i + 1; j <= Math.min(lines.length - 1, i + 2); j++) {
+          if (parsePageStatus(lines[j])) break;
+          if (lines[j].length > 48) break;
+          const d = parseStatusDate(lines[j]);
+          if (d) { date = d; dateIndex = j; break; }
+        }
+      }
+      if (date) pairs.push({ ...status, stamp: date.stamp, lineIndex: i, dateIndex });
+    }
+    if (pairs.length < 2) return null;
+
+    const clusters = [];
+    let current = [];
+    for (const pair of pairs) {
+      const prev = current[current.length - 1];
+      if (!prev || pair.lineIndex - prev.dateIndex <= 4) current.push(pair);
+      else { if (current.length) clusters.push(current); current = [pair]; }
+    }
+    if (current.length) clusters.push(current);
+    const valid = clusters.filter(c => c.length >= 2);
+    if (!valid.length) return null;
+    valid.sort((a, b) => Math.max(...b.map(x => x.stamp)) - Math.max(...a.map(x => x.stamp)) || b.length - a.length);
+    const cluster = valid[0];
+    const latest = [...cluster].sort((a, b) => b.stamp - a.stamp || b.rank - a.rank || b.lineIndex - a.lineIndex)[0];
+    return { ...latest, pairCount: cluster.length };
+  }
+
+  function canonicalStatus(value) {
+    const s = cleanText(value || '');
+    if (Object.prototype.hasOwnProperty.call(STATUS_RANK, s)) return s;
+    if (s === '已结束' || s === '已撤回') return s;
+    return parsePageStatus(s)?.status || '';
+  }
+
+  function shouldAdoptPageStatus(currentValue, evidence) {
+    if (!evidence?.status || Number(evidence.pairCount || 0) < 2) return false;
+    const current = canonicalStatus(currentValue);
+    if (current === evidence.status) return false;
+    if (current === 'Offer' || current === '已结束' || current === '已撤回') return false;
+    if (evidence.terminal) return true;
+    const currentRank = STATUS_RANK[current] || 0;
+    const nextRank = STATUS_RANK[evidence.status] || 0;
+    return nextRank > currentRank;
+  }
+
   function enhanceRecords(input) {
     const records = Array.isArray(input) ? input.map(r => ({ ...r })) : [];
     if (!records.length) {
@@ -296,6 +409,7 @@
       return records;
     }
     const snap = collectSemanticSnapshot();
+    const pageStatus = records.length === 1 ? inferLatestStatusFromPage() : null;
     const goodExistingPositions = new Set(records.filter(r => !isSuspiciousPosition(r.position) && positionScore(r.position, 'existing') >= 9).map(r => semanticText(r.position)));
     const unusedPositionCandidates = snap.positions.filter(c => !goodExistingPositions.has(semanticText(c.value)));
 
@@ -307,6 +421,11 @@
         r.company = cleanedCompany;
         const best = snap.companies[0];
         if (best && best.score >= 14 && companyAffinity(r.company, best.value) >= 2 && displayPreference(best.value, r.company) > 0) r.company = best.value;
+      }
+
+      if (pageStatus && shouldAdoptPageStatus(r.status || r.rawStatus, pageStatus)) {
+        r.status = pageStatus.status;
+        r.rawStatus = pageStatus.raw;
       }
 
       const current = normalizePosition(r.position);

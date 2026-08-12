@@ -13,5 +13,6 @@ importScripts(
   'followup-review.js',
   'followup-queue.js',
   'v25-orchestrator.js',
-  'followup-background.js'
+  'followup-background.js',
+  'v26-lite.js'
 );

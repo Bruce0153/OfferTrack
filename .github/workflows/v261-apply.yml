@@ -1,3 +1,4 @@
+# retry after updating the stricter v2.6.1 performance contract
 name: v261-apply-once
 
 on:
@@ -27,8 +28,6 @@ jobs:
           cat .sync/v261-part0.txt .sync/v261-part1.txt .sync/v261-part2.txt .sync/v261-part3.txt | base64 -d > /tmp/v261.patch.xz
           echo '5a6bad79bf80dd05df82344704e5e8efedeea027edc408483497e3e872e11df3  /tmp/v261.patch.xz' | sha256sum -c -
           xz -dc /tmp/v261.patch.xz > /tmp/v261.patch
-          # GitHub current test file has a newer PASS-label line than the artifact used to build the patch.
-          # Skip only that test file; all production/source hunks must apply exactly.
           git apply --check --exclude=tests/v26-lite-runtime.test.js /tmp/v261.patch
           git apply --exclude=tests/v26-lite-runtime.test.js /tmp/v261.patch
           python - <<'PY'

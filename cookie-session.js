@@ -43,8 +43,10 @@
     return {
       available: true,
       level,
+      strength: level,
       cookieCount: activeCount,
       authLikeCount: authLike,
+      sessionLikeCount: authLike,
       httpOnlyCount: httpOnly,
       secureCount: secure,
       sessionCount: session,
@@ -55,7 +57,7 @@
   }
 
   async function inspectUrls(urls) {
-    if (!globalThis.chrome?.cookies?.getAll) return { available: false, level: 'unavailable', cookieCount: 0, authLikeCount: 0, httpOnlyCount: 0, checkedAt: Date.now() };
+    if (!globalThis.chrome?.cookies?.getAll) return { available: false, level: 'unavailable', strength: 'unavailable', cookieCount: 0, authLikeCount: 0, sessionLikeCount: 0, httpOnlyCount: 0, checkedAt: Date.now() };
     const seen = new Map();
     for (const raw of Array.isArray(urls) ? urls : [urls]) {
       let url;

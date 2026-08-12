@@ -39,6 +39,7 @@
       challenge: '需要验证',
       rate_limited: '访问受限',
       error: '检查异常',
+      pending_recheck: '待复检',
       unknown: '未知'
     })[state] || '未知';
   }
@@ -62,7 +63,7 @@
     })[state] || '';
   }
 
-  function shouldSkipEntry(entry, { source = 'alarm', hasOpenTab = false, at = now() } = {}) {
+  function shouldSkipEntry(entry, { source = 'alarm', hasOpenTab = false, cookieEvidence = null, at = now() } = {}) {
     if (!entry || !ISSUE_STATES.has(entry.state)) return { skip: false };
     if (source === 'manual' || hasOpenTab) return { skip: false, bypassed: true };
     const until = Number(entry.cooldownUntil || 0);
@@ -84,7 +85,11 @@
 
   function pruneMap(input, at = now()) {
     const rows = Object.entries(input || {})
-      .filter(([host, entry]) => host && entry && at - Number(entry.lastCheckedAt || entry.updatedAt || 0) <= MAX_AGE_MS)
+      .filter(([host, entry]) => {
+        if (!host || !entry) return false;
+        if (entry.state === 'pending_recheck' && !Number(entry.lastCheckedAt || 0)) return false;
+        return at - Number(entry.lastCheckedAt || entry.updatedAt || 0) <= MAX_AGE_MS;
+      })
       .sort((a, b) => Number(b[1].lastCheckedAt || b[1].updatedAt || 0) - Number(a[1].lastCheckedAt || a[1].updatedAt || 0))
       .slice(0, MAX_ENTRIES);
     return Object.fromEntries(rows);
@@ -133,6 +138,10 @@
       lastFailureAt: failed ? at : Number(previous?.lastFailureAt || 0),
       consecutiveFailures,
       cooldownUntil: cooldownMs ? at + cooldownMs : 0,
+      cookieLevel: clean(inspected?.cookieEvidence?.level || '', 20),
+      cookieCount: Number(inspected?.cookieEvidence?.cookieCount || 0),
+      cookieAuthLikeCount: Number(inspected?.cookieEvidence?.authLikeCount || 0),
+      cookieCheckedAt: Number(inspected?.cookieEvidence?.checkedAt || 0),
       updatedAt: at
     };
     map[host] = entry;
@@ -141,18 +150,19 @@
     const previousFailures = Number(previous?.consecutiveFailures || 0);
     const actionableError = state === 'error' && consecutiveFailures >= 3 && previousFailures < 3;
     const issue = failed && ((state !== 'error' && transition) || actionableError);
-    return { transition, issue, recovered: state === 'healthy' && previous && ISSUE_STATES.has(previous.state), previous, entry };
+    return { transition, issue, recovered: state === 'healthy' && previous && (ISSUE_STATES.has(previous.state) || previous.state === 'pending_recheck'), previous, entry };
   }
 
   function summarizeMap(map) {
     const entries = Object.values(pruneMap(map || {}));
-    const counts = { total: entries.length, healthy: 0, loginRequired: 0, challenge: 0, rateLimited: 0, error: 0, unknown: 0 };
+    const counts = { total: entries.length, healthy: 0, loginRequired: 0, challenge: 0, rateLimited: 0, error: 0, pendingRecheck: 0, unknown: 0 };
     for (const e of entries) {
       if (e.state === 'healthy') counts.healthy++;
       else if (e.state === 'login_required') counts.loginRequired++;
       else if (e.state === 'challenge') counts.challenge++;
       else if (e.state === 'rate_limited') counts.rateLimited++;
       else if (e.state === 'error') counts.error++;
+      else if (e.state === 'pending_recheck') counts.pendingRecheck++;
       else counts.unknown++;
     }
     return counts;
@@ -161,7 +171,41 @@
   async function state() {
     const map = pruneMap(await readMap());
     const entries = Object.values(map).sort((a, b) => Number(b.lastCheckedAt || 0) - Number(a.lastCheckedAt || 0));
-    return { entries, summary: summarizeMap(map) };
+    return { entries, summary: summarizeMap(map), cookieApiAvailable: !!globalThis.chrome?.cookies?.getAll };
+  }
+
+  async function retainHosts(hosts = []) {
+    const allowed = new Set((Array.isArray(hosts) ? hosts : []).map(normalizeHost).filter(Boolean));
+    const map = pruneMap(await readMap());
+    let changed = false;
+    for (const host of Object.keys(map)) {
+      if (!allowed.has(host)) {
+        delete map[host];
+        changed = true;
+      }
+    }
+    if (changed) await writeMap(map);
+    return { entries: Object.values(map), summary: summarizeMap(map) };
+  }
+
+  async function markCookieChanged(host) {
+    const key = normalizeHost(host);
+    if (!key) return null;
+    const map = pruneMap(await readMap());
+    const previous = map[key] || null;
+    if (!previous || (!ISSUE_STATES.has(previous.state) && previous.state !== 'pending_recheck')) return null;
+    map[key] = {
+      ...previous,
+      host: key,
+      state: 'pending_recheck',
+      label: stateLabel('pending_recheck'),
+      reason: '检测到登录会话变化，等待复检',
+      cooldownUntil: 0,
+      consecutiveFailures: 0,
+      updatedAt: now()
+    };
+    await writeMap(map);
+    return map[key];
   }
 
   async function clear(host = '') {
@@ -203,6 +247,8 @@
     get,
     shouldSkip,
     record,
+    markCookieChanged,
+    retainHosts,
     state,
     clear
   };

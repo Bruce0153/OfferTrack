@@ -6,6 +6,7 @@
   const ApplicationData = globalThis.OfferTrackApplicationData;
   const Strategy = globalThis.OfferTrackFollowUpStrategy;
   const Sessions = globalThis.OfferTrackSessionManager;
+  const CookieSession = globalThis.OfferTrackCookieSession;
   const ALARM = 'offertrack-follow-up';
   const LEASE_MS = 20 * 60 * 1000;
   const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
@@ -21,6 +22,7 @@
       followUpNotify: input.followUpNotify !== false,
       followUpNotifySessionIssues: input.followUpNotifySessionIssues !== false,
       followUpApiFirst: input.followUpApiFirst !== false,
+      followUpCookiePreflight: input.followUpCookiePreflight !== false,
       followUpStructuredState: input.followUpStructuredState !== false,
       followUpApiTimeoutSeconds: Math.min(15, Math.max(3, Number(input.followUpApiTimeoutSeconds || 6))),
       followUpTabTimeoutSeconds: Math.min(60, Math.max(8, Number(input.followUpTabTimeoutSeconds || 25)))
@@ -84,6 +86,7 @@
         await releaseLease(result);
         return result;
       } catch (e) {
+        globalThis.OfferTrackChangeJournal?.clearRecentMatches?.();
         const failState = { source, at: Date.now(), ok: false, message: friendlyError(e), checked: 0, changed: 0, failed: 1 };
         await chrome.storage.local.set({ lastFollowUp: failState });
         await releaseLease(failState);
@@ -121,30 +124,44 @@
     const targets = Core.selectTargets(existing, cfg);
     const rawGroups = Core.groupTargets(targets);
     const allGroups = Providers?.enrichGroups ? Providers.enrichGroups(rawGroups, Core) : rawGroups;
-    const groups = allGroups.slice(0, cfg.followUpMaxSitesPerRun);
+    // Session health shown in the UI must represent current follow-up sites only.
+    // This also removes stale/orphan entries left by older builds.
+    await Sessions?.retainHosts?.(allGroups.map(group => group.host)).catch(() => null);
+    const groups = globalThis.OfferTrackFollowUpQueue?.selectGroups
+      ? globalThis.OfferTrackFollowUpQueue.selectGroups(allGroups, cfg, source)
+      : allGroups.slice(0, cfg.followUpMaxSitesPerRun);
 
     const result = {
       ok: true, source, mode: cfg.followUpMode, at: Date.now(),
       totalRecords: targets.length, totalSites: allGroups.length, scheduledSites: groups.length,
       providers: Providers?.summarize ? Providers.summarize(allGroups) : [],
       strategyStats: {},
+      cookieStats: { strong: 0, possible: 0, weak: 0, none: 0, unavailable: 0 },
       checked: 0, changed: 0, failed: 0, loginRequired: 0, sessionBlocked: 0, waiting: 0, unmatched: 0, details: [], sessionIssues: []
     };
 
     for (const group of groups) {
+      await globalThis.OfferTrackFollowUpQueue?.markRunning?.(group, source).catch(() => null);
       const inspected = await inspectGroup(group, cfg, source).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
       if (inspected?.strategy) result.strategyStats[inspected.strategy] = (result.strategyStats[inspected.strategy] || 0) + 1;
-      const sessionEvent = Sessions?.record ? await Sessions.record(group, inspected, source).catch(() => null) : null;
+      const cookieEvidence = group._cookieEvidence || null;
+      if (cookieEvidence) {
+        const level = cookieEvidence.available === false ? 'unavailable' : (cookieEvidence.level || 'weak');
+        if (result.cookieStats[level] != null) result.cookieStats[level] += 1;
+      }
+      const sessionEvent = Sessions?.record ? await Sessions.record(group, { ...inspected, cookieEvidence }, source).catch(() => null) : null;
       if (sessionEvent?.issue) result.sessionIssues.push({ host: group.host, provider: group.providerName || group.provider?.name || '', state: sessionEvent.entry?.state || '', label: sessionEvent.entry?.label || '', reason: sessionEvent.entry?.reason || '', url: sessionEvent.entry?.lastUrl || group.url });
       const patchResult = await applyGroupResult(settings, token, group, inspected);
       for (const k of ['checked','changed','failed','loginRequired','sessionBlocked','waiting','unmatched']) result[k] += patchResult[k] || 0;
       if (patchResult.detail) result.details.push(patchResult.detail);
+      await globalThis.OfferTrackFollowUpQueue?.completeGroup?.(group, inspected, patchResult).catch(() => null);
       await sleep(250);
     }
 
     if (allGroups.length > groups.length) result.details.push({ host: '', status: 'limited', message: `本轮按设置只检查前 ${groups.length}/${allGroups.length} 个招聘网站` });
     result.sessionHealth = Sessions?.state ? (await Sessions.state().catch(() => null))?.summary || null : null;
     result.message = `自动跟进完成：检查 ${result.checked} 条，状态变化 ${result.changed}，待登录 ${result.loginRequired}，需验证/受限 ${result.sessionBlocked}，失败 ${result.failed}`;
+    await globalThis.OfferTrackChangeJournal?.appendFromResult?.(result).catch(() => []);
     await chrome.storage.local.set({ lastFollowUp: result });
     if (cfg.followUpNotify && result.changed > 0) await notifyChanges(result);
     if (cfg.followUpNotifySessionIssues && result.sessionIssues.length) await notifySessionIssues(result);
@@ -153,14 +170,19 @@
   }
 
   async function inspectGroup(group, cfg, source = 'manual') {
+    const cookieEvidence = cfg.followUpCookiePreflight && CookieSession?.inspectGroup
+      ? await CookieSession.inspectGroup(group).catch(() => ({ available: false, level: 'unavailable', checkedAt: Date.now() }))
+      : { available: false, level: 'unavailable', checkedAt: Date.now() };
+    group._cookieEvidence = cookieEvidence;
+    const apiSessionLikely = cookieEvidence.available === false || cookieEvidence.level !== 'none';
     let tab = await findBestOpenTab(group);
-    const sessionDecision = Sessions?.shouldSkip ? await Sessions.shouldSkip(group, { source, hasOpenTab: !!tab }).catch(() => ({ skip: false })) : { skip: false };
+    const sessionDecision = Sessions?.shouldSkip ? await Sessions.shouldSkip(group, { source, hasOpenTab: !!tab, cookieEvidence }).catch(() => ({ skip: false })) : { skip: false };
     if (sessionDecision?.skip) {
       return { host: group.host, provider: group.provider, status: 'session_paused', sessionState: sessionDecision.state, error: `${sessionDecision.label || '会话异常'}，已暂停自动重试至 ${formatLocalTime(sessionDecision.cooldownUntil)}`, records: [], page: { url: group.url } };
     }
 
     // 1) 若之前已经学到过“安全、无敏感参数、且成功返回投递数据”的 GET API，先尝试无页面检查。
-    if (cfg.followUpApiFirst && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
+    if (cfg.followUpApiFirst && apiSessionLikely && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
       const cached = await loadApiHints(group);
       if (cached.length) {
         const cachedResult = await tryApiCandidates(group, cfg, cached, group.url, true);
@@ -188,11 +210,11 @@
       if (earlyProbe?.rateLimited) return { host: group.host, provider: group.provider, status: 'rate_limited', error: earlyProbe.reason || '招聘网站暂时限制访问', records: [], page: { url: finalUrl } };
       if (earlyProbe?.challenge) return { host: group.host, provider: group.provider, status: 'challenge', error: earlyProbe.reason || '招聘网站要求安全验证', records: [], page: { url: finalUrl } };
 
-      // 2) 先只收集“只读探针”：页面 JSON script + Resource Timing URL，不执行页面代码、不读取 Cookie。
+      // 2) 先只收集“只读探针”：页面 JSON script + Resource Timing URL，不执行页面代码；Cookie 仅由后台会话证据层做摘要，不读取/保存值。
       const strategyProbe = await collectStrategyProbe(tab.id);
 
       // 3) API GET：只尝试同源、明显属于投递/申请查询、且不含 create/update/delete/withdraw 等动作词的 URL。
-      if (cfg.followUpApiFirst && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
+      if (cfg.followUpApiFirst && apiSessionLikely && group.capabilities?.apiDirect && group.strategies?.includes('api_get')) {
         const apiResult = await tryApiCandidates(group, cfg, strategyProbe?.resources || [], finalUrl, false);
         if (apiResult?.status === 'ok') return apiResult;
       }
@@ -218,7 +240,7 @@
           const records = enrichStrategyRecords([...structuredRecords, ...mainRecords], group, finalUrl);
           const useful = Strategy?.isUseful ? Strategy.isUseful(group.records, records, Core, 0.8) : { ok: records.length > 0 };
           if (useful.ok) {
-            return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'main-world' } };
+            return { host: group.host, provider: group.provider, status: 'ok', strategy: 'structured_state', records, page: { url: finalUrl, title: strategyProbe?.page?.title || '' }, evidence: { matched: useful.matched, total: useful.total, source: 'main-world-safe' } };
           }
         }
       }
@@ -259,7 +281,7 @@
     if (!chrome.scripting?.executeScript) throw new Error('当前浏览器无法恢复页面解析器');
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+      files: ['company-identity.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
       world: 'ISOLATED'
     });
     if (chrome.scripting?.insertCSS) {
@@ -295,32 +317,48 @@
       world: 'MAIN',
       func: () => {
         const names = ['__NEXT_DATA__','__NUXT__','__NUXT_DATA__','__INITIAL_STATE__','__PRELOADED_STATE__','__APOLLO_STATE__','__INITIAL_PROPS__','__DATA__','__STORE__'];
+        const SAFE_LEAF_RE = /(position|job|post|vacancy|role|status|state|stage|result|company|corp|employer|organization|tenant|brand|location|city|apply|application|delivery|submit|created|time|date|id|number|progress|process)/i;
+        const SENSITIVE_KEY_RE = /(cookie|token|secret|password|passwd|credential|authorization|phone|mobile|email|e-mail|avatar|profile|resume(?:content|file)?|address|identitycard|idcard|passport|bank|salary|compensation)/i;
         let nodes = 0;
         const seen = new WeakSet();
-        function scrub(v, depth=0) {
-          if (v == null || nodes++ > 1400 || depth > 5) return null;
-          if (typeof v === 'string') return v.slice(0, 1200);
-          if (typeof v === 'number' || typeof v === 'boolean') return v;
+        function project(v, depth=0, path='') {
+          if (v == null || nodes++ > 900 || depth > 6) return null;
           if (typeof v !== 'object') return null;
           if (seen.has(v)) return null;
           seen.add(v);
-          if (Array.isArray(v)) return v.slice(0, 50).map(x => { try { return scrub(x, depth+1); } catch { return null; } });
-          const out = {};
-          let count = 0;
-          for (const key of Object.keys(v).slice(0, 60)) {
-            if (count++ > 55) break;
-            try {
-              const val = scrub(v[key], depth+1);
-              if (val !== null && val !== undefined) out[key] = val;
-            } catch {}
+          if (Array.isArray(v)) {
+            const rows = [];
+            for (const x of v.slice(0, 40)) {
+              const child = project(x, depth + 1, path);
+              if (child && (typeof child !== 'object' || Object.keys(child).length)) rows.push(child);
+            }
+            return rows.length ? rows : null;
           }
-          return out;
+          const out = {};
+          for (const key of Object.keys(v).slice(0, 70)) {
+            if (SENSITIVE_KEY_RE.test(key)) continue;
+            const nextPath = path ? `${path}.${key}` : key;
+            let val;
+            try { val = v[key]; } catch { continue; }
+            if (val == null) continue;
+            if (typeof val === 'object') {
+              const child = project(val, depth + 1, nextPath);
+              if (child && (Array.isArray(child) ? child.length : Object.keys(child).length)) out[key] = child;
+              continue;
+            }
+            if (!SAFE_LEAF_RE.test(key) && !SAFE_LEAF_RE.test(nextPath)) continue;
+            if (typeof val === 'string') out[key] = val.slice(0, 500);
+            else if (typeof val === 'number' || typeof val === 'boolean') out[key] = val;
+          }
+          return Object.keys(out).length ? out : null;
         }
         const snapshots = [];
         for (const name of names) {
           try {
             const value = globalThis[name];
-            if (value && typeof value === 'object') snapshots.push({ name, data: scrub(value) });
+            if (!value || typeof value !== 'object') continue;
+            const data = project(value, 0, name);
+            if (data) snapshots.push({ name, data });
           } catch {}
         }
         return snapshots;
@@ -400,7 +438,9 @@
   }
 
   async function findBestOpenTab(group) {
-    const tabs = await chrome.tabs.query({}).catch(() => []);
+    const host = String(group?.host || '').trim().toLowerCase();
+    if (!host || !/^[a-z0-9.-]+$/.test(host)) return null;
+    const tabs = await chrome.tabs.query({ url: [`https://${host}/*`] }).catch(() => []);
     const matching = tabs.filter(t => {
       try { return t.id != null && /^https:/i.test(t.url || '') && new URL(t.url).hostname.replace(/^www\./, '') === group.host; }
       catch { return false; }
@@ -542,17 +582,17 @@
     }).catch(() => {});
   }
 
-  chrome.runtime.onInstalled.addListener(() => configure().catch(console.warn));
-  chrome.runtime.onStartup?.addListener(() => configure().catch(console.warn));
+  chrome.runtime.onInstalled.addListener(() => configure().catch(() => {}));
+  chrome.runtime.onStartup?.addListener(() => configure().catch(() => {}));
   chrome.storage.onChanged?.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes.settings) configure().catch(console.warn);
+    if (changes.settings) configure().catch(() => {});
     if (changes.followUpRunRequest?.newValue) {
-      run('manual').catch(err => console.error('[OfferTrack follow-up manual]', err));
+      run('manual').catch(() => {});
     }
   });
   chrome.alarms?.onAlarm.addListener(alarm => {
-    if (alarm?.name === ALARM) run('alarm').catch(err => console.error('[OfferTrack follow-up]', err));
+    if (alarm?.name === ALARM) run('alarm').catch(() => {});
   });
 
   globalThis.OfferTrackFollowUp = { configure, getState, run, _execute: execute, _inspectGroup: inspectGroup };

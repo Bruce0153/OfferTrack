@@ -1,4 +1,5 @@
 (() => {
+  const CompanyIdentity = globalThis.OfferTrackCompanyIdentity;
   const APP_PAGE_RE = /(我的投递|投递记录|应聘记录|申请记录|我的申请|应聘进度|求职进度|招聘进度|候选人中心|网申投递|申请进度)/i;
   const APP_URL_RE = /(mydeliver|mydelivery|myapply|my-apply|application|applications|applyrecord|delivery|deliveries|candidate.*(?:apply|deliver)|process|progress|applicationcenter|jobapply)/i;
   const APP_ROUTE_RE = /\/(?:account|personal|candidate|user|profile)\/(?:apply|application|applications|delivery|deliveries|record|records)(?:[/?#]|$)/i;
@@ -59,7 +60,11 @@
   let lastPageResultFingerprint = '';
   let runtimeConfigCache = null;
   let runtimeConfigAt = 0;
+  let identityCache = null;
+  let identityCacheAt = 0;
+  let identityCacheKey = '';
   const AUTO_SCAN_MIN_GAP = 4000;
+  const IDENTITY_CACHE_MS = 30 * 60 * 1000;
 
   document.getElementById('offertrack-badge')?.remove();
 
@@ -91,16 +96,22 @@
     });
     obs.observe(document.documentElement, { childList: true, subtree: true });
 
-    routeTimer = setInterval(() => {
-      if (location.href !== lastHref) {
-        lastHref = location.href;
-        lastDetected = routeLooksRelevant();
-        runtimeConfigCache = null;
-        try { globalThis.__offerTrackInvalidateSemanticCache?.(); } catch {}
-        scheduleAutoScan(350);
-        setTimeout(() => scheduleAutoScan(0), 2600);
-      }
-    }, 1500);
+    const onRouteSignal = () => {
+      if (location.href === lastHref) return;
+      lastHref = location.href;
+      lastDetected = routeLooksRelevant();
+      runtimeConfigCache = null;
+      identityCache = null;
+      try { globalThis.__offerTrackInvalidateSemanticCache?.(); } catch {}
+      scheduleAutoScan(350);
+      setTimeout(() => scheduleAutoScan(0), 2600);
+    };
+    window.addEventListener('hashchange', onRouteSignal, { passive: true });
+    window.addEventListener('popstate', onRouteSignal, { passive: true });
+    window.addEventListener('pageshow', onRouteSignal, { passive: true });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) onRouteSignal();
+    }, { passive: true });
   }
 
   function routeLooksRelevant() {
@@ -186,6 +197,14 @@
         lastSemanticHref = location.href;
       } catch {}
     }
+
+    // Restore v2.5's bounded site-level identity reconciliation without replacing
+    // the v2.6 parser heuristics. Strong site identity may correct weak/personal
+    // page-level company candidates, but never forces a low-confidence overwrite.
+    if (usable.length && !cfg.companyAlias) {
+      try { usable = await reconcileSiteIdentity(usable); } catch {}
+    }
+
     lastRejectedCount = Math.max(0, parsed.length - usable.length);
     lastRecords = usable;
     lastDetected = baseDetected;
@@ -198,6 +217,35 @@
     if (baseDetected) renderBadge(usable, lastRejectedCount);
     await maybeAutoSync(cfg, usable);
     return payload;
+  }
+
+  async function reconcileSiteIdentity(records) {
+    if (!CompanyIdentity?.resolve || !CompanyIdentity?.shouldPreferResolved) return records;
+    const key = `${location.origin}${location.pathname}`;
+    let identity = identityCache;
+    if (!identity || identityCacheKey !== key || Date.now() - identityCacheAt > IDENTITY_CACHE_MS) {
+      identity = await chrome.runtime.sendMessage({ type: 'RESOLVE_SITE_IDENTITY', url: location.href }).catch(() => null);
+      identityCache = identity?.ok ? identity : null;
+      identityCacheAt = Date.now();
+      identityCacheKey = key;
+    }
+    const resolved = CompanyIdentity.normalizeCompany(identity?.company || '');
+    if (!resolved || Number(identity?.confidence || 0) < 30) return records;
+
+    const semanticCandidates = Array.isArray(globalThis.__offerTrackSemanticState?.companies)
+      ? globalThis.__offerTrackSemanticState.companies.slice(0, 8).map(x => ({ value: x.value, source: x.source || 'current-record', context: x.context || '' }))
+      : [];
+    return records.map(record => {
+      const current = CompanyIdentity.normalizeCompany(record?.company || '');
+      const combined = CompanyIdentity.resolve([
+        ...semanticCandidates,
+        current ? { value: current, source: 'current-record' } : null,
+        { value: resolved, source: identity?.source || 'site-json', bonus: 4 }
+      ].filter(Boolean));
+      const preferSite = CompanyIdentity.shouldPreferResolved(current, identity, { minConfidence: 35, strongConfidence: 65 });
+      const company = preferSite ? resolved : (combined.company || current || resolved);
+      return { ...record, company };
+    });
   }
 
   async function maybeAutoSync(cfg, records) {

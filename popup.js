@@ -9,9 +9,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('sync').onclick = sync;
   $('options').onclick = () => chrome.runtime.openOptionsPage();
   $('followUpNow').onclick = runFollowUpNow;
+  $('followUpActions').onclick = () => chrome.runtime.openOptionsPage();
   await loadState();
   await loadFollowUpState();
-  await loadSessionHealth();
   await scan();
 });
 
@@ -28,7 +28,7 @@ async function ensurePageBridge(tabId) {
   if (!chrome.scripting?.executeScript) throw new Error('当前浏览器无法恢复页面解析器，请刷新招聘页面后重试');
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+    files: ['company-identity.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
     world: 'ISOLATED'
   });
   if (chrome.scripting?.insertCSS) {
@@ -76,19 +76,28 @@ async function scan() {
 
 function renderPreview() {
   const root = $('preview');
-  root.innerHTML = '';
+  root.replaceChildren();
   if (!currentRecords.length) {
-    root.innerHTML = '<div class="empty">暂无预览</div>';
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无预览';
+    root.appendChild(empty);
     return;
   }
   for (const r of currentRecords.slice(0, 5)) {
     const row = document.createElement('div');
     row.className = 'preview-row';
-    const company = escapeHtml(r.company || r.platform || '未知公司');
-    const position = escapeHtml(r.position || '未知岗位');
-    const status = escapeHtml(r.status || '已投递');
-    const detail = escapeHtml([r.location, r.applyTime].filter(Boolean).join(' · ') || '地点/投递时间未识别');
-    row.innerHTML = `<div><b>${company}</b><span>${position}</span><small>${detail}</small></div><em>${status}</em>`;
+    const info = document.createElement('div');
+    const company = document.createElement('b');
+    const position = document.createElement('span');
+    const detail = document.createElement('small');
+    const status = document.createElement('em');
+    company.textContent = r.company || r.platform || '未知公司';
+    position.textContent = r.position || '未知岗位';
+    detail.textContent = [r.location, r.applyTime].filter(Boolean).join(' · ') || '地点/投递时间未识别';
+    status.textContent = r.status || '已投递';
+    info.append(company, position, detail);
+    row.append(info, status);
     root.appendChild(row);
   }
   if (currentRecords.length > 5) {
@@ -137,29 +146,26 @@ function setMessage(text, error=false) {
   $('message').style.color = error ? '#c94646' : '#6f798b';
 }
 
-function escapeHtml(v) {
-  return String(v || '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-}
-
-
 async function loadFollowUpState() {
   try {
-    const stored = await chrome.storage.local.get(['settings','lastFollowUp','followUpLease']);
-    const settings = stored.settings || {};
-    const alarm = await chrome.alarms.get('offertrack-follow-up').catch(() => null);
-    const lease = stored.followUpLease || {};
-    const running = lease.status === 'running' && Date.now() - Number(lease.startedAt || 0) < 20 * 60 * 1000;
-    $('followUpState').textContent = running ? '运行中…' : (settings.followUpEnabled ? `已开启 · ${Number(settings.followUpIntervalHours || 6)}h` : '未开启');
+    const res = await chrome.runtime.sendMessage({ type: 'GET_FOLLOWUP_SUMMARY' });
+    if (!res?.ok) throw new Error(res?.error || '读取失败');
+    const mode = res.mode === 'background_tabs' ? '后台标签页' : '仅已打开页面';
+    $('followUpState').textContent = res.running ? '运行中…' : (res.enabled ? `已开启 · ${Number(res.intervalHours || 6)}h` : '未开启');
+    const q = res.session || {};
+    const sessionProblems = Number(q.loginRequired || 0) + Number(q.challenge || 0) + Number(q.rateLimited || 0);
     const parts = [];
-    if (stored.lastFollowUp?.at) {
-      parts.push(`上次 ${new Date(stored.lastFollowUp.at).toLocaleString('zh-CN', { hour12:false })}`);
-      parts.push(`变化 ${stored.lastFollowUp.changed ?? 0}`);
-      if (Array.isArray(stored.lastFollowUp.providers) && stored.lastFollowUp.providers.length) {
-        parts.push(`系统 ${stored.lastFollowUp.providers.map(x => `${x.name}:${x.sites}`).join('/')}`);
-      }
-    }
-    if (alarm?.scheduledTime) parts.push(`下次 ${new Date(alarm.scheduledTime).toLocaleString('zh-CN', { hour12:false })}`);
-    $('followUpMeta').textContent = parts.join(' · ') || '可在设置中开启每 6 小时自动跟进';
+    if (res.running) parts.push('正在后台检查');
+    else if (q.healthy) parts.push(`${q.healthy} 个网站正常`);
+    if (sessionProblems) parts.push(`${sessionProblems} 个登录/验证问题`);
+    if (res.reviewCount) parts.push(`${res.reviewCount} 项待确认`);
+    if (res.lastFollowUp?.at) parts.push(`上次 ${new Date(res.lastFollowUp.at).toLocaleString('zh-CN', { hour12:false })} · 变化 ${res.lastFollowUp.changed ?? 0}`);
+    if (res.nextAt) parts.push(`下次 ${new Date(res.nextAt).toLocaleString('zh-CN', { hour12:false })}`);
+    parts.push(mode);
+    $('followUpMeta').textContent = parts.join(' · ') || '可在设置中开启自动跟进';
+    const btn = $('followUpActions');
+    btn.hidden = !res.actionableCount;
+    btn.textContent = `${res.actionableCount || 0} 项需处理`;
   } catch (e) {
     $('followUpState').textContent = '不可用';
     $('followUpMeta').textContent = e?.message || String(e);
@@ -167,40 +173,11 @@ async function loadFollowUpState() {
 }
 
 async function runFollowUpNow() {
-  const btn = $('followUpNow');
-  btn.disabled = true;
-  btn.textContent = '正在启动…';
+  const btn = $('followUpNow'); btn.disabled = true; btn.textContent = '正在启动…';
   try {
-    const request = { id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: Date.now() };
-    await chrome.storage.local.set({ followUpRunRequest: request });
-    setMessage('自动跟进任务已启动，可关闭插件窗口；任务会在后台继续运行。');
-    await new Promise(resolve => setTimeout(resolve, 700));
-    await loadFollowUpState();
-    await loadSessionHealth();
-  } catch (e) {
-    setMessage(e?.message || String(e), true);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '立即跟进全部';
-  }
-}
-
-
-
-async function loadSessionHealth() {
-  const el = $('sessionMeta');
-  if (!el) return;
-  try {
-    const res = await chrome.runtime.sendMessage({ type: 'GET_SESSION_HEALTH' });
-    if (!res?.ok) throw new Error(res?.error || '读取失败');
-    const q = res.summary || {};
-    const problems = (q.loginRequired || 0) + (q.challenge || 0) + (q.rateLimited || 0) + (q.error || 0);
-    el.textContent = problems
-      ? `会话：${q.healthy || 0} 健康 · ${q.loginRequired || 0} 需登录 · ${(q.challenge || 0) + (q.rateLimited || 0)} 验证/受限 · ${q.error || 0} 异常`
-      : `会话：${q.healthy || 0} 个网站健康`;
-    el.classList.toggle('problem', problems > 0);
-  } catch {
-    el.textContent = '会话状态暂不可用';
-    el.classList.remove('problem');
-  }
+    await chrome.storage.local.set({ followUpRunRequest: { id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, at: Date.now() } });
+    setMessage('自动跟进已在后台启动，可关闭此窗口。');
+    for (const delay of [650, 2200, 5200]) setTimeout(loadFollowUpState, delay);
+  } catch (e) { setMessage(e?.message || String(e), true); }
+  finally { setTimeout(() => { btn.disabled = false; btn.textContent = '立即跟进'; }, 800); }
 }

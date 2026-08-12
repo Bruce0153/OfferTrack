@@ -32,35 +32,40 @@
       <label class="check"><input id="autoSync" type="checkbox" /> 对已验证网站自动同步 <span>（某网站必须先手动成功同步一次，才会进入自动同步白名单）</span></label>
     </section>
 
-
-    <section class="panel">
-      <h2>4. 自动跟进招聘进度</h2>
-      <label class="check"><input id="followUpEnabled" type="checkbox" /> 每隔一段时间自动检查飞书中仍在进行的投递</label>
-      <div class="inline">
+    <section class="panel compact-panel">
+      <div class="panel-title-row"><h2>4. 自动跟进</h2><span id="followUpBadge" class="badge">读取中</span></div>
+      <label class="check strong-check"><input id="followUpEnabled" type="checkbox" /> 自动检查仍在进行的投递</label>
+      <div class="inline compact-inline">
         <label>检查间隔（小时）<input id="followUpIntervalHours" type="number" min="1" max="72" step="1" value="6" /></label>
-        <label>单轮最多检查网站数<input id="followUpMaxSitesPerRun" type="number" min="1" max="30" step="1" value="12" /></label>
+        <label>模式
+          <select id="followUpMode">
+            <option value="background_tabs">后台标签页</option>
+            <option value="open_tabs">仅已打开页面</option>
+          </select>
+        </label>
       </div>
-      <label>自动跟进模式
-        <select id="followUpMode">
-          <option value="open_tabs">安全模式：只检查已经打开的招聘网站</option>
-          <option value="background_tabs">实验模式：必要时后台打开标签页检查并自动关闭</option>
-        </select>
-      </label>
-      <label class="check"><input id="followUpApiFirst" type="checkbox" /> 优先尝试安全 GET API <span>（仅同源、只读查询；失败自动降级）</span></label>
-      <label class="check"><input id="followUpStructuredState" type="checkbox" /> 读取页面 Structured State <span>（JSON / SSR Store；不执行远程代码）</span></label>
-      <label class="check"><input id="followUpNotify" type="checkbox" /> 招聘状态发生变化时发送系统通知</label>
-      <label class="check"><input id="followUpNotifySessionIssues" type="checkbox" /> 登录失效、验证码或访问受限首次出现时提醒</label>
-      <label class="check"><input id="followUpIncludeTerminal" type="checkbox" /> 继续检查 Offer / 已结束 / 已撤回记录</label>
-      <p class="hint">v2.3 在 API GET → Structured State → Page Scan 三级策略之外增加招聘网站会话健康管理。登录失效、验证码和访问受限会进入冷却期，避免每轮重复打开网站；手动“立即跟进”或你已经重新打开该网站时会主动复检并恢复。插件仍不读取或保存 Cookie、手机号、密码。</p>
-      <div class="buttons"><button id="runFollowUp" class="primary">立即跟进一次</button><button id="refreshFollowUp">刷新运行状态</button></div>
-      <div id="followUpStatus" class="status"></div>
-      <div class="session-health">
-        <div class="session-head"><strong>招聘网站会话</strong><span id="sessionSummary">读取中…</span></div>
-        <div id="sessionList" class="session-list"></div>
-        <div class="buttons session-actions"><button id="refreshSessions">刷新会话状态</button><button id="openSessionProblem">打开需处理网站</button><button id="clearSessions">清理会话记录</button></div>
+      <div class="followup-summary">
+        <strong id="followUpSummary">读取中…</strong>
+        <small id="followUpSchedule"></small>
       </div>
-    </section>
+      <div class="buttons"><button id="runFollowUp" class="primary">立即跟进</button><button id="showFollowUpActions" class="attention" hidden>0 项需要处理</button></div>
+      <div id="followUpActions" class="action-list" hidden></div>
 
+      <details class="lite-details">
+        <summary>更多选项</summary>
+        <div class="advanced-block">
+          <label>单轮最多检查网站数<input id="followUpMaxSitesPerRun" type="number" min="1" max="30" step="1" value="12" /></label>
+          <label class="check"><input id="followUpNotify" type="checkbox" /> 状态变化时发送系统通知</label>
+          <label class="check"><input id="followUpNotifySessionIssues" type="checkbox" /> 登录失效、验证码或访问受限首次出现时提醒</label>
+          <label class="check"><input id="followUpIncludeTerminal" type="checkbox" /> 继续检查 Offer / 已结束 / 已撤回记录</label>
+        </div>
+        <div class="advanced-block">
+          <h3>工作方式与隐私</h3>
+          <p class="hint"><b>Cookie 会话证据 → 安全 GET API → Structured State → Page Scan</b></p>
+          <p class="hint">Cookie 只用于本机判断会话是否可能有效和登录恢复，不保存 Cookie 值；没有 Cookie 也不会直接判定掉线，页面仍会继续兜底。GET API 仅同源、只读；Structured State 只读取有界 JSON / SSR Store，不执行远程代码。</p>
+        </div>
+      </details>
+    </section>
 
     <section class="panel">
       <h2>5. 公司名覆盖（可选）</h2>
@@ -83,7 +88,7 @@
     </section>
 
     <div class="bottom"><button id="save" class="primary big">保存设置</button><span id="saveMsg"></span></div>
-    <section class="privacy">隐私：插件不会保存招聘网站账号密码、Cookie 或验证码。会话管理只记录招聘网站域名、健康状态、失败原因和检查时间；自动跟进继续复用 Edge 当前已有的登录会话。</section>
+    <section class="privacy">隐私：插件不保存招聘网站账号密码、Cookie 值或验证码。Cookie API 仅在本机读取会话证据并立即摘要为数量/健康等级；不会写入飞书、日志或持久化原始 Cookie。</section>
   </main>
   <script src="options.js"></script>
 </body>

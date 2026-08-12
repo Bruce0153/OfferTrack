@@ -32,7 +32,6 @@
       <label class="check"><input id="autoSync" type="checkbox" /> 对已验证网站自动同步 <span>（某网站必须先手动成功同步一次，才会进入自动同步白名单）</span></label>
     </section>
 
-
     <section class="panel compact-panel">
       <div class="panel-title-row"><h2>4. 自动跟进</h2><span id="followUpBadge" class="badge">读取中</span></div>
       <label class="check strong-check"><input id="followUpEnabled" type="checkbox" /> 自动检查仍在进行的投递</label>
@@ -62,7 +61,7 @@
         </div>
         <div class="advanced-block">
           <h3>工作方式与隐私</h3>
-          <p class="hint"><b>Cookie 会话证据 → 安全 GET API → 页面 Structured State → Page Scan</b></p>
+          <p class="hint"><b>Cookie 会话证据 → 安全 GET API → Structured State → Page Scan</b></p>
           <p class="hint">Cookie 只用于本机判断会话是否可能有效和登录恢复，不保存 Cookie 值；没有 Cookie 也不会直接判定掉线，页面仍会继续兜底。GET API 仅同源、只读；Structured State 只读取有界 JSON / SSR Store，不执行远程代码。</p>
         </div>
       </details>

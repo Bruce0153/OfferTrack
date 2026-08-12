@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.6.1
+
+- 恢复 v2.5 已验证的 Site Identity Resolver：静态招聘入口身份解析 + 必要时 inactive rendered fallback，并恢复页面级公司身份共识校正。
+- 恢复 MAIN-world Structured State 安全投影：敏感 key 黑名单 + 招聘业务字段白名单 + 严格节点/深度/字符串预算。
+- 恢复 Cookie Evidence 对无 Cookie 场景的 API 安全门控；无 Cookie 不判定掉线，继续 Structured State / Page Scan 兜底。
+- 恢复按目标 host 查询已打开标签页，避免全 HTTPS tab 扫描。
+- 保留 v2.6 的轻量设置页、人工确认、Single Flight、登录恢复和账号 UI 过滤，不回滚 UI/产品简化。
+
 ## v2.5.0
 
 ### Follow-up Orchestrator

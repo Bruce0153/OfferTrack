@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const CompanyIdentity = globalThis.OfferTrackCompanyIdentity;
 
   const COMPANY_NOISE_RE = /^(?:相关公司|关联公司|推荐公司|相似公司|其他公司|更多公司|热门公司|合作公司|公司信息|公司介绍|企业信息|企业介绍|所属公司|招聘公司|雇主信息|关于我们|招聘|校园招聘|校招|社招|应届|应届生|实习|职位|岗位|投递记录|申请记录|我的申请|我的投递|logo|icon|brand)$/i;
   const COMPANY_KEY_RE = /^(?:company(?:name|shortname|fullname|displayname)?|company_name|company_short_name|company_full_name|corp(?:name|shortname|fullname)?|corp_name|enterprise(?:name|shortname|fullname)?|employer(?:name|shortname|fullname)?|organization(?:name|shortname|fullname)?|organisation(?:name|shortname|fullname)?|orgname|org_name|brandname|brand_name|tenantname|tenant_name|sitename|site_name|publisher)$/i;
@@ -45,7 +46,7 @@
     if (/(投递|申请|应聘|岗位|职位|个人中心|候选人|详情|收藏|流程)/.test(s)) return '';
     if (STRONG_ROLE_RE.test(s) && s.length > 24) return '';
 
-    return s.slice(0, 80);
+    return CompanyIdentity?.normalizeCompany ? CompanyIdentity.normalizeCompany(s).slice(0, 80) : s.slice(0, 80);
   }
 
   function companyCandidateVariants(value) {
@@ -126,7 +127,9 @@
     const positionSeen = new Set();
 
     const addCompany = (value, source, context = '') => {
-      if (COMPANY_CONTEXT_BAD_RE.test(context || '')) return;
+      if (COMPANY_CONTEXT_BAD_RE.test(context || '')
+        || CompanyIdentity?.isBadContext?.(context || '')
+        || CompanyIdentity?.isPersonalContext?.(context || '')) return;
       for (const variant of companyCandidateVariants(value)) {
         const cleaned = variant.value;
         const sig = cleaned.toLowerCase();
@@ -202,7 +205,9 @@
         const normalizedKey = key.replace(/[-_\s]/g, '').toLowerCase();
         const nextPath = [...path, key];
         const nextPathText = nextPath.join('.');
-        if (COMPANY_CONTEXT_BAD_RE.test(nextPathText)) continue;
+        if (COMPANY_CONTEXT_BAD_RE.test(nextPathText)
+          || CompanyIdentity?.isBadContext?.(nextPathText)
+          || CompanyIdentity?.isPersonalContext?.(nextPathText)) continue;
         if (typeof val === 'string' || typeof val === 'number') {
           if (COMPANY_KEY_RE.test(key) || (normalizedKey === 'name' && COMPANY_PARENT_RE.test(pathText))) addCompany(String(val), 'runtime-json', nextPathText);
           if (POSITION_KEY_RE.test(key) || (normalizedKey === 'title' && POSITION_PARENT_RE.test(pathText)) || (normalizedKey === 'name' && POSITION_PARENT_RE.test(pathText) && !COMPANY_PARENT_RE.test(pathText))) addPosition(String(val), 'runtime-json', nextPathText);
@@ -233,7 +238,9 @@
       companyRe.lastIndex = 0;
       while ((m = companyRe.exec(raw)) && hit++ < 40) {
         const around = raw.slice(Math.max(0, m.index - 180), Math.min(raw.length, companyRe.lastIndex + 100));
-        if (!COMPANY_CONTEXT_BAD_RE.test(around)) addCompany(unescapeJsString(m[2]), 'runtime-regex', m[1]);
+        if (!COMPANY_CONTEXT_BAD_RE.test(around)
+          && !CompanyIdentity?.isBadContext?.(around)
+          && !CompanyIdentity?.isPersonalContext?.(around)) addCompany(unescapeJsString(m[2]), 'runtime-regex', m[1]);
       }
       hit = 0;
       positionRe.lastIndex = 0;

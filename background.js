@@ -4,7 +4,7 @@ const NEXT_ACTION_OPTIONS = ['等待', '准备笔试', '准备面试', '联系HR
 const PRIORITY_OPTIONS = ['S', 'A', 'B', 'C'];
 const DEFAULT_SETTINGS = {
   appId: '', appSecret: '', appToken: '', tableId: '', baseUrl: '',
-  autoSync: false, enabled: true, customSites: {}, companyAliases: {}, trustedAutoSyncHosts: []
+  autoSync: false, enabled: true, followUpCookiePreflight: true, customSites: {}, companyAliases: {}, trustedAutoSyncHosts: []
 };
 
 const FIELD_DEFS = [
@@ -37,9 +37,7 @@ async function hardenStorageAccess() {
     if (chrome.storage?.local?.setAccessLevel) {
       await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
     }
-  } catch (e) {
-    console.warn('[OfferTrack] storage access hardening unavailable', e);
-  }
+  } catch {}
 }
 
 async function migrateSettings() {
@@ -56,10 +54,12 @@ async function migrateSettings() {
 
 const BACKGROUND_MESSAGE_TYPES = new Set([
   'SYNC_RECORDS', 'RESOLVE_FEISHU_URL', 'TEST_FEISHU', 'INIT_FIELDS',
-  'OPEN_OPTIONS', 'GET_STATE', 'GET_CONTENT_CONFIG', 'PAGE_SCAN_RESULT'
+  'OPEN_OPTIONS', 'GET_STATE', 'GET_CONTENT_CONFIG', 'PAGE_SCAN_RESULT', 'RESOLVE_SITE_IDENTITY'
 ]);
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // 只处理 background.js 自己负责的消息。未知消息必须留给其他模块
+  // （例如 Session Manager）处理，不能抢先返回 unknown_message。
   if (!BACKGROUND_MESSAGE_TYPES.has(msg?.type)) return false;
   (async () => {
     try {
@@ -125,14 +125,147 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true });
           break;
         }
+        case 'RESOLVE_SITE_IDENTITY': {
+          const result = await resolveSiteIdentity(msg.url || sender?.tab?.url || '');
+          sendResponse({ ok: true, ...result });
+          break;
+        }
       }
     } catch (err) {
-      console.error('[OfferTrack]', err);
+      void err;
       sendResponse({ ok: false, error: friendlyError(err), code: err?.feishuCode || null });
     }
   })();
   return true;
 });
+
+
+const SITE_IDENTITY_CACHE_TTL = 12 * 60 * 60 * 1000;
+const SITE_IDENTITY_MAX_HTML = 900_000;
+const siteIdentityInflight = new Map();
+
+async function resolveSiteIdentity(url) {
+  const Identity = globalThis.OfferTrackCompanyIdentity;
+  if (!Identity?.siteIdentityRoot || !Identity?.parseHtmlCandidates || !Identity?.resolve) {
+    return { company: '', confidence: 0, source: '', root: '' };
+  }
+  const root = Identity.siteIdentityRoot(url);
+  if (!root) return { company: '', confidence: 0, source: '', root: '' };
+  if (siteIdentityInflight.has(root)) return siteIdentityInflight.get(root);
+  const task = resolveSiteIdentityOnce(root).finally(() => siteIdentityInflight.delete(root));
+  siteIdentityInflight.set(root, task);
+  return task;
+}
+
+async function resolveSiteIdentityOnce(root) {
+  const Identity = globalThis.OfferTrackCompanyIdentity;
+  const cacheKey = `siteIdentity:${root}`;
+  const stored = await chrome.storage.local.get([cacheKey]);
+  const cached = stored[cacheKey];
+  const cachedTtl = cached?.company ? SITE_IDENTITY_CACHE_TTL : 30 * 60 * 1000;
+  if (cached?.at && Date.now() - Number(cached.at) < cachedTtl) return cached;
+
+  let providerName = '';
+  try { providerName = globalThis.OfferTrackProviderRegistry?.detect?.({ url: root })?.name || ''; } catch {}
+  let result = { company: '', confidence: 0, source: '', root, at: Date.now() };
+
+  // Layer 1: cheap static identity. No page code is executed.
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const response = await fetch(root, {
+      method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'follow',
+      signal: controller.signal, headers: { Accept: 'text/html,application/xhtml+xml' }
+    });
+    clearTimeout(timer);
+    if (response.ok) {
+      const length = Number(response.headers.get('content-length') || 0);
+      if (!length || length <= SITE_IDENTITY_MAX_HTML) {
+        const html = (await response.text()).slice(0, SITE_IDENTITY_MAX_HTML);
+        const candidates = Identity.parseHtmlCandidates(html, { maxChars: SITE_IDENTITY_MAX_HTML });
+        const resolved = Identity.resolve(candidates, { providerName });
+        if (resolved.company && resolved.confidence >= 30) {
+          result = { company: resolved.company, confidence: resolved.confidence, source: resolved.source || 'site-static', root, at: Date.now() };
+        }
+      }
+    }
+  } catch {}
+
+  // Layer 2: if an SPA shell exposes no useful company metadata, render the same recruitment
+  // landing page once in an inactive tab and inspect only identity-oriented DOM/meta fields.
+  // This is bounded, cached, and never reads candidate application content or Cookie values.
+  if (!result.company && chrome.tabs?.create && chrome.scripting?.executeScript) {
+    const rendered = await resolveRenderedSiteIdentity(root, providerName).catch(() => null);
+    if (rendered?.company && Number(rendered.confidence || 0) >= 30) result = { ...rendered, root, at: Date.now() };
+  }
+
+  await chrome.storage.local.set({ [cacheKey]: result });
+  return result;
+}
+
+async function resolveRenderedSiteIdentity(root, providerName = '') {
+  let tab = null;
+  try {
+    tab = await chrome.tabs.create({ url: root, active: false });
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      const current = await chrome.tabs.get(tab.id).catch(() => null);
+      if (!current) return null;
+      if (current.status === 'complete') break;
+      await sleep(300);
+    }
+    await sleep(700);
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['company-identity.js'], world: 'ISOLATED' }).catch(() => null);
+    const injected = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'ISOLATED',
+      args: [providerName],
+      func: provider => {
+        const I = globalThis.OfferTrackCompanyIdentity;
+        if (!I?.resolve) return { company: '', confidence: 0, source: '' };
+        const candidates = [];
+        const add = (value, source, context = '', nearby = '') => {
+          if (!value || I.isBadContext?.(context) || I.isPersonalNameLike?.(value, context, nearby)) return;
+          candidates.push({ value, source, context, nearby });
+        };
+        const ctx = el => {
+          const parts = [];
+          let cur = el;
+          for (let i = 0; cur && i < 5; i++, cur = cur.parentElement) {
+            parts.push(String(cur.id || ''));
+            parts.push(typeof cur.className === 'string' ? cur.className : '');
+            parts.push(String(cur.getAttribute?.('aria-label') || ''));
+          }
+          return parts.join(' ').slice(0, 700);
+        };
+        const near = el => {
+          let cur = el?.parentElement;
+          for (let i = 0; cur && i < 5; i++, cur = cur.parentElement) {
+            const t = String(cur.innerText || cur.textContent || '').replace(/\s+/g, ' ').trim();
+            if (t && t.length <= 700) return t;
+          }
+          return '';
+        };
+        add(document.querySelector('meta[property="og:site_name"]')?.content, 'site-meta', 'og:site_name');
+        add(document.querySelector('meta[name="application-name"]')?.content, 'site-meta', 'application-name');
+        add(document.querySelector('meta[name="apple-mobile-web-app-title"]')?.content, 'site-meta', 'apple-title');
+        const title = String(document.title || '').trim();
+        add(title, 'site-title', 'document.title');
+        for (const part of title.split(/[-_|｜·—–]/).map(x => x.trim()).filter(Boolean)) add(part, 'site-title-part', 'document.title');
+        const attrs = ['data-company-name','data-company','data-corp-name','data-enterprise-name','data-employer-name','data-organization-name','data-org-name','data-brand-name','data-tenant-name','data-site-name'];
+        for (const el of [...document.querySelectorAll(attrs.map(a => `[${a}]`).join(','))].slice(0, 120)) {
+          for (const a of attrs) if (el.getAttribute?.(a)) add(el.getAttribute(a), 'declared-dom', `${a} ${ctx(el)}`, near(el));
+        }
+        const selectors = ['header [class*="brand"]','header [class*="logo"]','nav [class*="brand"]','nav [class*="logo"]','[class*="header"] [class*="brand"]','[class*="header"] [class*="logo"]','header img[alt]','[class*="logo"] img[alt]','img[class*="logo"][alt]','[itemtype*="Organization"] [itemprop="name"]'];
+        for (const sel of selectors) for (const el of [...document.querySelectorAll(sel)].slice(0, 80)) add(el.innerText || el.alt || el.getAttribute?.('aria-label') || el.getAttribute?.('title'), 'header-brand', `${sel} ${ctx(el)}`, near(el));
+        return I.resolve(candidates, { providerName: provider });
+      }
+    }).catch(() => []);
+    const result = injected?.[0]?.result;
+    return result?.company ? { company: result.company, confidence: result.confidence, source: result.source || 'site-rendered' } : null;
+  } finally {
+    if (tab?.id != null) await chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
 
 async function getSettings() {
   const { settings } = await chrome.storage.local.get(['settings']);

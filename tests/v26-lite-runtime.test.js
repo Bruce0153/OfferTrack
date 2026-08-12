@@ -11,7 +11,7 @@ const popup = read('popup.html');
 const State = require('../status-state-machine.js');
 const Review = require('../followup-review.js');
 
-assert.strictEqual(manifest.version, '2.6.0');
+assert.strictEqual(manifest.version, '2.6.1');
 assert.ok(!(manifest.content_scripts || []).some(x => (x.matches || []).includes('https://*/*')), 'must not inject on every HTTPS page');
 assert.ok(worker.includes("'v26-lite.js'"), 'v2.6 lite runtime must be loaded');
 assert.ok(worker.indexOf("'followup-background.js'") < worker.indexOf("'v26-lite.js'"), 'lite runtime must wrap completed follow-up runtime');
@@ -39,4 +39,4 @@ assert.strictEqual(State.decide('面试中', '已投递', { matchConfidence: 1 }
 assert.strictEqual(State.decide('面试中', '已结束', { matchConfidence: 1, rawStatus: '流程结束' }).allowed, true);
 assert.strictEqual(State.decide('面试中', '已结束', { matchConfidence: 1, rawStatus: '状态不明确', userConfirmed: true }).allowed, true, 'explicit user confirmation may approve terminal transition');
 
-console.log('v2.6 lightweight runtime regression: PASS');
+console.log('v2.6.1 lightweight runtime regression: PASS');

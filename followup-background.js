@@ -6,6 +6,7 @@
   const ApplicationData = globalThis.OfferTrackApplicationData;
   const Strategy = globalThis.OfferTrackFollowUpStrategy;
   const Sessions = globalThis.OfferTrackSessionManager;
+  const CookieSession = globalThis.OfferTrackCookieSession;
   const ALARM = 'offertrack-follow-up';
   const LEASE_MS = 20 * 60 * 1000;
   const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
@@ -21,6 +22,7 @@
       followUpNotify: input.followUpNotify !== false,
       followUpNotifySessionIssues: input.followUpNotifySessionIssues !== false,
       followUpApiFirst: input.followUpApiFirst !== false,
+      followUpCookiePreflight: input.followUpCookiePreflight !== false,
       followUpStructuredState: input.followUpStructuredState !== false,
       followUpApiTimeoutSeconds: Math.min(15, Math.max(3, Number(input.followUpApiTimeoutSeconds || 6))),
       followUpTabTimeoutSeconds: Math.min(60, Math.max(8, Number(input.followUpTabTimeoutSeconds || 25)))
@@ -122,6 +124,7 @@
     const targets = Core.selectTargets(existing, cfg);
     const rawGroups = Core.groupTargets(targets);
     const allGroups = Providers?.enrichGroups ? Providers.enrichGroups(rawGroups, Core) : rawGroups;
+    await Sessions?.retainHosts?.(allGroups.map(group => group.host)).catch(() => null);
     const groups = globalThis.OfferTrackFollowUpQueue?.selectGroups
       ? globalThis.OfferTrackFollowUpQueue.selectGroups(allGroups, cfg, source)
       : allGroups.slice(0, cfg.followUpMaxSitesPerRun);
@@ -138,7 +141,7 @@
       await globalThis.OfferTrackFollowUpQueue?.markRunning?.(group, source).catch(() => null);
       const inspected = await inspectGroup(group, cfg, source).catch(err => ({ host: group.host, provider: group.provider, status: 'error', error: err?.message || String(err), records: [], page: null }));
       if (inspected?.strategy) result.strategyStats[inspected.strategy] = (result.strategyStats[inspected.strategy] || 0) + 1;
-      const sessionEvent = Sessions?.record ? await Sessions.record(group, inspected, source).catch(() => null) : null;
+      const sessionEvent = Sessions?.record ? await Sessions.record(group, { ...inspected, cookieEvidence: group._cookieEvidence || null }, source).catch(() => null) : null;
       if (sessionEvent?.issue) result.sessionIssues.push({ host: group.host, provider: group.providerName || group.provider?.name || '', state: sessionEvent.entry?.state || '', label: sessionEvent.entry?.label || '', reason: sessionEvent.entry?.reason || '', url: sessionEvent.entry?.lastUrl || group.url });
       const patchResult = await applyGroupResult(settings, token, group, inspected);
       for (const k of ['checked','changed','failed','loginRequired','sessionBlocked','waiting','unmatched']) result[k] += patchResult[k] || 0;
@@ -159,8 +162,12 @@
   }
 
   async function inspectGroup(group, cfg, source = 'manual') {
+    const cookieEvidence = cfg.followUpCookiePreflight && CookieSession?.inspectGroup
+      ? await CookieSession.inspectGroup(group).catch(() => ({ available: false, level: 'unavailable', checkedAt: Date.now() }))
+      : { available: false, level: 'unavailable', checkedAt: Date.now() };
+    group._cookieEvidence = cookieEvidence;
     let tab = await findBestOpenTab(group);
-    const sessionDecision = Sessions?.shouldSkip ? await Sessions.shouldSkip(group, { source, hasOpenTab: !!tab }).catch(() => ({ skip: false })) : { skip: false };
+    const sessionDecision = Sessions?.shouldSkip ? await Sessions.shouldSkip(group, { source, hasOpenTab: !!tab, cookieEvidence }).catch(() => ({ skip: false })) : { skip: false };
     if (sessionDecision?.skip) {
       return { host: group.host, provider: group.provider, status: 'session_paused', sessionState: sessionDecision.state, error: `${sessionDecision.label || '会话异常'}，已暂停自动重试至 ${formatLocalTime(sessionDecision.cooldownUntil)}`, records: [], page: { url: group.url } };
     }
@@ -265,7 +272,7 @@
     if (!chrome.scripting?.executeScript) throw new Error('当前浏览器无法恢复页面解析器');
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+      files: ['company-identity.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
       world: 'ISOLATED'
     });
     if (chrome.scripting?.insertCSS) {
@@ -406,7 +413,7 @@
   }
 
   async function findBestOpenTab(group) {
-    const tabs = await chrome.tabs.query({}).catch(() => []);
+    const tabs = await chrome.tabs.query({ url: ['https://*/*'] }).catch(() => []);
     const matching = tabs.filter(t => {
       try { return t.id != null && /^https:/i.test(t.url || '') && new URL(t.url).hostname.replace(/^www\./, '') === group.host; }
       catch { return false; }
@@ -548,17 +555,17 @@
     }).catch(() => {});
   }
 
-  chrome.runtime.onInstalled.addListener(() => configure().catch(console.warn));
-  chrome.runtime.onStartup?.addListener(() => configure().catch(console.warn));
+  chrome.runtime.onInstalled.addListener(() => configure().catch(() => {}));
+  chrome.runtime.onStartup?.addListener(() => configure().catch(() => {}));
   chrome.storage.onChanged?.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes.settings) configure().catch(console.warn);
+    if (changes.settings) configure().catch(() => {});
     if (changes.followUpRunRequest?.newValue) {
-      run('manual').catch(err => console.error('[OfferTrack follow-up manual]', err));
+      run('manual').catch(() => {});
     }
   });
   chrome.alarms?.onAlarm.addListener(alarm => {
-    if (alarm?.name === ALARM) run('alarm').catch(err => console.error('[OfferTrack follow-up]', err));
+    if (alarm?.name === ALARM) run('alarm').catch(() => {});
   });
 
   globalThis.OfferTrackFollowUp = { configure, getState, run, _execute: execute, _inspectGroup: inspectGroup };

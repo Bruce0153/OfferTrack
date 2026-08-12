@@ -1,0 +1,71 @@
+name: OfferTrack v2.6 CI
+
+on:
+  push:
+    branches:
+      - feature/v2.6
+  pull_request:
+    branches:
+      - v2
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax and manifest
+        run: |
+          set -euo pipefail
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+          node - <<'NODE'
+          const m=require('./manifest.json');
+          if(m.manifest_version!==3) throw new Error('MV3 required');
+          if(m.version!=='2.6.0'||m.version_name!=='2.6.0') throw new Error('v2.6.0 version mismatch');
+          if(!(m.permissions||[]).includes('cookies')) throw new Error('cookies permission missing');
+          if((m.content_scripts||[]).some(x=>(x.matches||[]).includes('https://*/*'))) throw new Error('global https content script forbidden');
+          NODE
+      - name: Full regression suite
+        run: |
+          set -euo pipefail
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+      - name: Performance privacy and v2.6 guards
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const prod=fs.readdirSync('.').filter(x=>x.endsWith('.js')).map(x=>fs.readFileSync(x,'utf8')).join('\n');
+          if(/setInterval\s*\(/.test(prod)) throw new Error('setInterval forbidden');
+          if(/characterData\s*:\s*true/.test(prod)) throw new Error('characterData:true forbidden');
+          if(/eval\s*\(|new Function\s*\(|document\.write\s*\(/.test(prod)) throw new Error('dynamic code forbidden');
+          const content=fs.readFileSync('content.js','utf8');
+          if(!/AUTO_SCAN_MIN_GAP\s*=\s*4000/.test(content)||!content.includes('scanPromise')) throw new Error('scan guards missing');
+          const cookie=fs.readFileSync('cookie-session.js','utf8');
+          if(/storage\.local\.set/.test(cookie)||/console\.(?:log|info|debug|warn|error)/.test(cookie)) throw new Error('cookie evidence must not persist/log');
+          const options=fs.readFileSync('options.html','utf8');
+          if(!options.includes('Cookie 会话证据 → 安全 GET API → Structured State → Page Scan')) throw new Error('four-level pipeline explanation missing');
+          if(/id="followUp(?:CookiePreflight|ApiFirst|StructuredState)"/.test(options)) throw new Error('low-level follow-up switches must stay hidden');
+          const review=require('./followup-review.js');
+          if(review.MAX_ENTRIES>30||review.TTL_MS>14*24*60*60*1000) throw new Error('review storage budget too large');
+          const queue=require('./followup-queue.js');
+          if(queue.MAX_RETRIES>4) throw new Error('retry budget too high');
+          console.log('OfferTrack v2.6 safety: PASS');
+          NODE
+      - name: Build Edge ZIP
+        run: |
+          set -euo pipefail
+          ZIP=OfferTrack_Edge_v2.6.0.zip
+          rm -f "$ZIP"
+          zip -r "$ZIP" . -x '.git/*' '.github/*' 'tests/*' '*.zip'
+          unzip -t "$ZIP" >/dev/null
+          test "$(unzip -p "$ZIP" manifest.json | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>process.stdout.write(JSON.parse(s).version))")" = "2.6.0"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfferTrack-v2.6.0
+          path: OfferTrack_Edge_v2.6.0.zip
+          retention-days: 30

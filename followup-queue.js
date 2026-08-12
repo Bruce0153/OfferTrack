@@ -62,12 +62,15 @@
   function mergeJobs(a, b) {
     const A = normalizeJob(a), B = normalizeJob(b);
     if (A.id !== B.id) return B;
+    const resetRetryCount = !!b?.resetRetryCount;
+    const hasRetryCount = Object.prototype.hasOwnProperty.call(b || {}, 'retryCount');
+    const retryCount = resetRetryCount ? 0 : (hasRetryCount ? Math.max(A.retryCount, B.retryCount) : A.retryCount);
     return normalizeJob({
       ...A,
       ...B,
       applications: [...new Set([...A.applications, ...B.applications])],
       priority: Math.max(A.priority, B.priority),
-      retryCount: Math.min(A.retryCount, B.retryCount),
+      retryCount,
       nextRunAt: Math.min(A.nextRunAt || Infinity, B.nextRunAt || Infinity),
       reason: B.priority >= A.priority ? B.reason : A.reason,
       updatedAt: Date.now()
@@ -110,10 +113,11 @@
     const incoming = normalizeJob(input);
     const jobs = await read();
     const idx = jobs.findIndex(x => x.id === incoming.id);
-    if (idx >= 0) jobs[idx] = mergeJobs(jobs[idx], incoming);
-    else jobs.push(incoming);
+    const stored = idx >= 0 ? mergeJobs(jobs[idx], input) : incoming;
+    if (idx >= 0) jobs[idx] = stored;
+    else jobs.push(stored);
     await write(jobs);
-    return incoming;
+    return normalizeJob(stored);
   }
 
   async function knownHost(host) {
@@ -143,14 +147,16 @@
   async function markRunning(group, source = 'alarm') {
     const host = normalizeHost(group?.host);
     if (!host) return null;
-    return enqueue({
+    const input = {
       host,
       provider: group?.providerName || group?.provider?.name || '',
       applications: (group?.records || []).map(r => r.recordId),
       reason: activeJob?.reason || source,
-      retryCount: activeJob?.retryCount || 0,
       nextRunAt: Date.now()
-    });
+    };
+    if (activeJob) input.retryCount = activeJob.retryCount;
+    if (!activeJob && reasonKey(source) === 'manual') input.resetRetryCount = true;
+    return enqueue(input);
   }
 
   function shouldRetry(inspected = {}, patchResult = {}) {

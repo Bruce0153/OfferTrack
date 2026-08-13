@@ -1,11 +1,18 @@
 (function(root, factory) {
-  const api = factory();
+  const StatusState = root?.OfferTrackStatusStateMachine
+    || (typeof module !== 'undefined' && module.exports ? require('./status-state-machine.js') : null);
+  const api = factory(StatusState);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.OfferTrackFollowUpCore = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function() {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(StatusState) {
   'use strict';
 
-  const TERMINAL = new Set(['offer', '已结束', '已撤回']);
+  const FIELDS = Object.freeze({
+    company: '公司', position: '岗位名称', location: '工作地点', applyTime: '投递时间',
+    status: '当前状态', platform: '招聘平台', url: '岗位链接', uid: '唯一记录ID', rawStatus: '原始状态',
+    autoFollowUp: '自动跟进', lastCheckedAt: '最后检查时间'
+  });
+  const FOLLOWUP_TERMINAL = new Set(['Offer', '已结束', '已撤回']);
   const CHECK_URL_HINT_RE = /(mydeliver|mydelivery|myapply|my-apply|applications?|applicationcenter|deliveryrecord|delivery|candidatehome|candidate|personal\/delivery|account\/apply|position\/application|campusrecruitment\/position\/application|progress|process)/i;
   const DETAIL_URL_HINT_RE = /(zpdetail|jobdetail|position\/detail|jobs?\/\d+|positions?\/\d+)/i;
 
@@ -52,8 +59,12 @@
       .trim();
   }
 
+  function canonicalStatus(status) {
+    return StatusState?.normalize?.(text(status)) || '';
+  }
+
   function isTerminalStatus(status) {
-    return TERMINAL.has(norm(status));
+    return FOLLOWUP_TERMINAL.has(canonicalStatus(status));
   }
 
   function followUpOptOut(value) {
@@ -62,20 +73,22 @@
 
   function fromFeishu(item) {
     const f = item?.fields || {};
+    const value = key => text(f[key]);
+    const url = value(FIELDS.url);
     return {
       recordId: item?.record_id || '',
-      company: text(f['公司']),
-      position: text(f['岗位名称']),
-      location: text(f['工作地点']),
-      applyTime: text(f['投递时间']),
-      status: text(f['当前状态']),
-      platform: text(f['招聘平台']),
-      url: text(f['岗位链接']),
-      uid: text(f['唯一记录ID']),
-      rawStatus: text(f['原始状态']),
-      autoFollowUp: text(f['自动跟进']),
-      lastCheckedAt: text(f['最后检查时间']),
-      host: hostOf(text(f['岗位链接']))
+      company: value(FIELDS.company),
+      position: value(FIELDS.position),
+      location: value(FIELDS.location),
+      applyTime: value(FIELDS.applyTime),
+      status: value(FIELDS.status),
+      platform: value(FIELDS.platform),
+      url,
+      uid: value(FIELDS.uid),
+      rawStatus: value(FIELDS.rawStatus),
+      autoFollowUp: value(FIELDS.autoFollowUp),
+      lastCheckedAt: value(FIELDS.lastCheckedAt),
+      host: hostOf(url)
     };
   }
 
@@ -187,11 +200,13 @@
 
   function statusChanged(target, scanned) {
     if (!scanned) return false;
-    return !!norm(scanned.status) && norm(target.status) !== norm(scanned.status);
+    const from = canonicalStatus(target?.status);
+    const to = canonicalStatus(scanned.status);
+    return !!to && from !== to;
   }
 
   return {
-    text, hostOf, canonicalUrl, norm, normPosition, normCompany,
+    FIELDS, FOLLOWUP_TERMINAL, text, hostOf, canonicalUrl, norm, normPosition, normCompany, canonicalStatus,
     isTerminalStatus, followUpOptOut, fromFeishu, selectTargets,
     urlScore, chooseCheckUrl, groupTargets, similarity, matchScore,
     matchScanned, statusChanged

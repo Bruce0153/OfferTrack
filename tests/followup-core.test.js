@@ -56,6 +56,13 @@ const jdMatch = core.matchScanned([jd], [{
 }]);
 assert(jdMatch[0].score >= 100, '同 UID 之外，岗位+平台+URL 应有足够匹配分');
 
+assert.strictEqual(core.FIELDS.status, '当前状态');
+assert.strictEqual(core.FIELDS.url, '岗位链接');
+assert.strictEqual(core.canonicalStatus('待面试'), '面试中');
+assert.strictEqual(core.statusChanged({status:'面试中'}, {status:'待面试'}), false, 'equivalent raw labels must not create false status changes');
+assert.strictEqual(core.statusChanged({status:'筛选中'}, {status:'面试安排'}), true, 'canonical forward status change must still be detected');
+assert.strictEqual(core.statusChanged({status:'筛选中'}, {status:'未知状态'}), false, 'unknown scanned status must never trigger an update');
+
 assert(core.urlScore('https://app.mokahr.com/x#/candidateHome/applications') > core.urlScore('https://example.com/zpdetail/123'), '候选人申请页应优先于岗位详情页');
 assert.strictEqual(core.isTerminalStatus('Offer'), true);
 assert.strictEqual(core.isTerminalStatus('已结束'), true);

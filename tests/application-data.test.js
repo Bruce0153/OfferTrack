@@ -1,5 +1,6 @@
 const assert = require('assert');
 const data = require('../application-data.js');
+const State = require('../status-state-machine.js');
 
 const cases = [
   {
@@ -23,6 +24,10 @@ for (const c of cases) {
   assert(out.length >= 1, `should extract ${c.target}`);
   assert.strictEqual(out[0].position,c.target);
   assert.strictEqual(out[0].status,c.status);
+}
+
+for (const raw of ['已投递','待筛选','评估中','待测评','AI面试','offer已发放','流程结束','撤回成功','未知状态']) {
+  assert.strictEqual(data.normalizeStatus(raw), State.normalize(raw), `structured status normalization must follow State Machine: ${raw}`);
 }
 
 const noise = data.extractRecords([{ card:{ title:'跟进应聘进度，查询暂存投递记录', status:'处理中' } }],[{position:'27届校招-大模型算法工程师(J14380)'}],{});

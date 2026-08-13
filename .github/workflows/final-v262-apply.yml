@@ -5,7 +5,7 @@ on:
     branches:
       - fix/v2.6.2
     paths:
-      - '.sync/final-v262.patch.gz.b64'
+      - '.sync/final-v262.part*'
       - '.github/workflows/final-v262-apply.yml'
 
 permissions:
@@ -26,7 +26,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d .sync/final-v262.patch.gz.b64 > /tmp/final.patch.gz
+          cat \
+            .sync/final-v262.part00 \
+            .sync/final-v262.part01 \
+            .sync/final-v262.part02 \
+            .sync/final-v262.part03 \
+            .sync/final-v262.part04_05 \
+            .sync/final-v262.part06_07 \
+            .sync/final-v262.part08_09 \
+            .sync/final-v262.part10_11 > /tmp/final.patch.b64
+          test "$(wc -c < /tmp/final.patch.b64)" -eq 47276
+          base64 -d /tmp/final.patch.b64 > /tmp/final.patch.gz
           echo "4b04417f4512176ce9056e2be6afee7465a64a6170473fe9a1edc6fcc91568ae  /tmp/final.patch.gz" | sha256sum -c -
           gzip -dc /tmp/final.patch.gz > /tmp/final.patch
           git apply --check /tmp/final.patch

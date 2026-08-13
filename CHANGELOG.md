@@ -1,3 +1,12 @@
+## v2.6.2
+
+- 飞书表头瘦身：新表不再默认创建“下一步行动 / 面试时间 / 优先级 / 备注”，自动跟进也不再创建“最近错误 / 招聘系统 / 检查方式”；已有字段不自动删除。
+- 运行时模块改为职责命名：`followup-orchestrator.js`、`followup-actions.js`，版本号不再进入架构文件名或运行时 Global。
+- Queue / Review 的活动 Storage Key 与 Queue Alarm 改为无版本命名，并提供一次性旧 Key 迁移，迁移后删除旧 Key/Alarm。
+- 内部消息改为 `GET_FOLLOWUP_QUEUE` / `CLEAR_FOLLOWUP_QUEUE`，移除版本化协议名。
+- 删除确认无引用的 debug global 与 `normalizeCompanyComparable()` dead code。
+- Safe GET 执行函数内部再次强制 same-origin，避免未来调用方绕过上游筛选。
+
 # Changelog
 
 ## v2.6.1

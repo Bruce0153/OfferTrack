@@ -17,7 +17,7 @@
   function installReviewGuard() {
     if (!Core?.statusChanged || !Review?.add) return;
     const previous = Core.statusChanged;
-    if (previous.__offerTrackV26Wrapped) return;
+    if (previous.__offerTrackReviewGuardWrapped) return;
 
     const wrapped = function(target, scanned) {
       const allowed = previous(target, scanned);
@@ -48,7 +48,7 @@
       }).catch(() => null);
       return allowed;
     };
-    wrapped.__offerTrackV26Wrapped = true;
+    wrapped.__offerTrackReviewGuardWrapped = true;
     Core.statusChanged = wrapped;
   }
 
@@ -158,7 +158,6 @@
       '最后检查时间': nowText,
       '检查状态': '人工确认更新',
       '登录状态': '可访问',
-      '最近错误': ''
     };
     await feishuRequest(settings, token,
       `/bitable/v1/apps/${encodeURIComponent(settings.appToken)}/tables/${encodeURIComponent(settings.tableId)}/records/batch_update`,
@@ -192,5 +191,4 @@
 
   installReviewGuard();
   registerMessages();
-  globalThis.OfferTrackV26Lite = { summary, actions, openAction, resolveReview, installReviewGuard };
 })();

@@ -161,11 +161,11 @@
   function registerMessages() {
     if (!globalThis.chrome?.runtime?.onMessage) return;
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-      if (!['GET_FOLLOWUP_QUEUE_V2','CLEAR_FOLLOWUP_QUEUE_V2','GET_CHANGE_JOURNAL','CLEAR_CHANGE_JOURNAL','GET_COOKIE_SESSION_EVIDENCE'].includes(msg?.type)) return;
+      if (!['GET_FOLLOWUP_QUEUE','CLEAR_FOLLOWUP_QUEUE','GET_CHANGE_JOURNAL','CLEAR_CHANGE_JOURNAL','GET_COOKIE_SESSION_EVIDENCE'].includes(msg?.type)) return;
       (async () => {
         try {
-          if (msg.type === 'GET_FOLLOWUP_QUEUE_V2') return sendResponse({ ok: true, jobs: await Queue.read() });
-          if (msg.type === 'CLEAR_FOLLOWUP_QUEUE_V2') return sendResponse({ ok: true, jobs: await Queue.clear() });
+          if (msg.type === 'GET_FOLLOWUP_QUEUE') return sendResponse({ ok: true, jobs: await Queue.read() });
+          if (msg.type === 'CLEAR_FOLLOWUP_QUEUE') return sendResponse({ ok: true, jobs: await Queue.clear() });
           if (msg.type === 'GET_CHANGE_JOURNAL') return sendResponse({ ok: true, entries: await Journal.read() });
           if (msg.type === 'CLEAR_CHANGE_JOURNAL') { await Journal.clear(); return sendResponse({ ok: true, entries: [] }); }
           if (msg.type === 'GET_COOKIE_SESSION_EVIDENCE') {
@@ -191,15 +191,4 @@
   chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => { handlePageOpen(tabId, changeInfo, tab).catch(() => {}); });
   chrome.alarms?.onAlarm?.addListener(alarm => { handleQueueAlarm(alarm).catch(() => {}); });
 
-  globalThis.OfferTrackV25Orchestrator = {
-    installCoreGuards,
-    resolveKnownHost,
-    markPendingRecheck,
-    runHost,
-    handleCookieChange,
-    isLikelyRecruitmentUrl,
-    ensurePageBridge,
-    handlePageOpen,
-    handleQueueAlarm
-  };
 })();

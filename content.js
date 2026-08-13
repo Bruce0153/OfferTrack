@@ -198,8 +198,8 @@
       } catch {}
     }
 
-    // Restore v2.5's bounded site-level identity reconciliation without replacing
-    // the v2.6 parser heuristics. Strong site identity may correct weak/personal
+    // Reconcile bounded site-level identity without replacing parser heuristics.
+    // Strong site identity may correct weak/personal
     // page-level company candidates, but never forces a low-confidence overwrite.
     if (usable.length && !cfg.companyAlias) {
       try { usable = await reconcileSiteIdentity(usable); } catch {}

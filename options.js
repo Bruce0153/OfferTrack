@@ -56,7 +56,7 @@ function collect() {
     followUpIntervalHours: Number($('followUpIntervalHours').value || 6),
     followUpMaxSitesPerRun: Math.min(30, Math.max(1, Number($('followUpMaxSitesPerRun').value || 12))),
     followUpMode: $('followUpMode').value || 'open_tabs',
-    // v2.6: four-level safe follow-up is one core pipeline, not three separate user-facing switches.
+    // The four-level safe follow-up is one core pipeline, not separate user-facing switches.
     followUpCookiePreflight: true,
     followUpApiFirst: true,
     followUpStructuredState: true,

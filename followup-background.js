@@ -9,7 +9,7 @@
   const CookieSession = globalThis.OfferTrackCookieSession;
   const ALARM = 'offertrack-follow-up';
   const LEASE_MS = 20 * 60 * 1000;
-  const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];
+  const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态'];
   let runningPromise = null;
 
   function normalizedSettings(input = {}) {
@@ -245,7 +245,7 @@
         }
       }
 
-      // 5) 最后才使用现有 DOM/Semantic Parser，保证 v2.0/v2.1 的能力始终是兜底。
+      // 5) 最后才使用现有 DOM/Semantic Parser，保证页面解析能力始终作为最终兜底。
       const scan = await scanTab(tab.id, createdTab ? 4 : 2, createdTab);
       if (!scan?.ok) return { host: group.host, provider: group.provider, status: 'error', strategy: 'page_scan', error: scan?.error || '页面解析失败', records: [], page: { url: finalUrl } };
       const records = Array.isArray(scan.records) ? scan.records : [];
@@ -371,7 +371,7 @@
     if (!Strategy?.rankApiCandidates || !ApplicationData?.extractRecords) return null;
     const ranked = Strategy.rankApiCandidates(resources, [], pageUrl || group.url, 3);
     for (const candidate of ranked) {
-      const fetched = await fetchJsonCandidate(candidate.url, cfg.followUpApiTimeoutSeconds);
+      const fetched = await fetchJsonCandidate(candidate.url, pageUrl || group.url, cfg.followUpApiTimeoutSeconds);
       if (!fetched?.ok || fetched.data == null) continue;
       const extracted = ApplicationData.extractRecords([fetched.data], group.records, { maxNodes: 3000, maxDepth: 7 });
       const records = enrichStrategyRecords(extracted, group, pageUrl || group.url);
@@ -383,7 +383,8 @@
     return null;
   }
 
-  async function fetchJsonCandidate(url, timeoutSeconds) {
+  async function fetchJsonCandidate(url, pageUrl, timeoutSeconds) {
+    if (!Strategy?.sameOrigin?.(url, pageUrl)) return { ok: false, error: 'blocked_cross_origin' };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.max(3000, Number(timeoutSeconds || 6) * 1000));
     try {
@@ -486,33 +487,33 @@
     const now = new Date().toLocaleString('zh-CN', { hour12: false });
     const patches = [];
     const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, sessionBlocked: 0, waiting: 0, unmatched: 0, detail: null };
-    const common = { '最后检查时间': now, '招聘系统': group.providerName || group.provider?.name || 'Generic Web', '检查方式': inspected?.strategy ? (Strategy?.strategyLabel ? Strategy.strategyLabel(inspected.strategy) : inspected.strategy) : '' };
+    const common = { '最后检查时间': now };
 
     if (inspected.status === 'session_paused') {
       const loginText = inspected.sessionState === 'login_required' ? '已失效' : inspected.sessionState === 'challenge' ? '需验证' : inspected.sessionState === 'rate_limited' ? '访问受限' : '未知';
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '会话暂停', '登录状态': loginText, '最近错误': safeCell(inspected.error || '', 500) } });
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '会话暂停', '登录状态': loginText } });
       summary.waiting = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'session_paused', message: inspected.error };
     } else if (inspected.status === 'waiting') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '等待打开招聘网站', '登录状态': '未知', '最近错误': inspected.error || '' } });
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '等待打开招聘网站', '登录状态': '未知' } });
       summary.waiting = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'waiting', message: inspected.error };
     } else if (inspected.status === 'login') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '需要登录', '登录状态': '已失效', '最近错误': inspected.error || '' } });
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '需要登录', '登录状态': '已失效' } });
       summary.loginRequired = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'login', message: inspected.error };
     } else if (inspected.status === 'challenge' || inspected.status === 'rate_limited') {
       const loginText = inspected.status === 'challenge' ? '需验证' : '访问受限';
       const checkText = inspected.status === 'challenge' ? '需要安全验证' : '访问暂时受限';
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': checkText, '登录状态': loginText, '最近错误': safeCell(inspected.error || '', 500) } });
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': checkText, '登录状态': loginText } });
       summary.sessionBlocked = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: inspected.status, message: inspected.error };
     } else if (inspected.status === 'error') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '检查失败', '登录状态': '未知', '最近错误': safeCell(inspected.error, 500) } });
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '检查失败', '登录状态': '未知' } });
       summary.failed = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'error', message: inspected.error };
     } else if (inspected.status === 'empty') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '未解析到投递', '登录状态': '可访问', '最近错误': inspected.error || '' } });
+      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '未解析到投递', '登录状态': '可访问' } });
       summary.unmatched = group.records.length;
       summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'empty', message: inspected.error };
     } else {
@@ -521,12 +522,12 @@
       for (const m of matches) {
         const target = m.target, scanned = m.scanned;
         if (!scanned) {
-          patches.push({ record_id: target.recordId, fields: { ...common, '检查状态': '未匹配到岗位', '登录状态': '可访问', '最近错误': '页面已解析，但未找到与该岗位足够匹配的记录' } });
+          patches.push({ record_id: target.recordId, fields: { ...common, '检查状态': '未匹配到岗位', '登录状态': '可访问' } });
           summary.unmatched += 1;
           continue;
         }
         summary.checked += 1;
-        const fields = { ...common, '检查状态': '已检查', '登录状态': '可访问', '最近错误': '' };
+        const fields = { ...common, '检查状态': '已检查', '登录状态': '可访问' };
         if (!target.location && scanned.location) fields['工作地点'] = safeCell(scanned.location);
         if (!target.applyTime && scanned.applyTime) fields['投递时间'] = safeCell(scanned.applyTime);
         if (Core.statusChanged(target, scanned)) {

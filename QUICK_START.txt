@@ -45,7 +45,7 @@ v2.5 会把 Alarm、手动检查、Cookie Change、Page Open 和异常 Retry 统
 
 五、岗位匹配与状态保护
 ----------------------
-v2.5 不再只依赖一个总分阈值。匹配优先级大致为：
+岗位匹配不只依赖一个总分阈值。匹配优先级大致为：
 Provider Application ID → Application/Delivery ID → Job/Position ID → Canonical URL → 岗位名 + 投递时间 → 语义证据。
 
 只有高置信且不歧义的结果才允许自动更新。低置信、多个候选难以区分或证据冲突时，会保留飞书旧状态而不是猜测。

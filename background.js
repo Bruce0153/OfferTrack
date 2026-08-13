@@ -1,7 +1,5 @@
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
 const DEFAULT_STATUS_OPTIONS = ['已投递', '筛选中', '笔试/测评', '面试中', 'Offer', '已结束', '已撤回'];
-const NEXT_ACTION_OPTIONS = ['等待', '准备笔试', '准备面试', '联系HR', '复盘面试', '等待结果', '跟进', '无需处理'];
-const PRIORITY_OPTIONS = ['S', 'A', 'B', 'C'];
 const DEFAULT_SETTINGS = {
   appId: '', appSecret: '', appToken: '', tableId: '', baseUrl: '',
   autoSync: false, enabled: true, followUpCookiePreflight: true, customSites: {}, companyAliases: {}, trustedAutoSyncHosts: []
@@ -16,10 +14,6 @@ const FIELD_DEFS = [
   { name: '招聘平台', type: 1 },
   { name: '岗位链接', type: 1 },
   { name: '最近更新时间', type: 1 },
-  { name: '下一步行动', type: 3, property: { options: NEXT_ACTION_OPTIONS.map(name => ({ name })) } },
-  { name: '面试时间', type: 1 },
-  { name: '优先级', type: 3, property: { options: PRIORITY_OPTIONS.map(name => ({ name })) } },
-  { name: '备注', type: 1 },
   { name: '唯一记录ID', type: 1 },
   { name: '原始状态', type: 1 }
 ];
@@ -603,15 +597,6 @@ function stringValue(v) {
 
 function normalizeComparable(v) {
   return String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-function normalizeCompanyComparable(v) {
-  return normalizeComparable(v)
-    .replace(/^(?:(?:欢迎|诚邀)(?:您)?(?:加入|来到|关注|选择)?|加入(?:我们|本公司|公司)?|走进)\s*/i, '')
-    .replace(/[！!。.]$/g, '')
-    .replace(/(?:20\d{2}|\d{2})(?:届)?(?:应届生?)?(?:秋季|春季)?(?:校园招聘|校招|招聘)/gi, ' ')
-    .replace(/[·•|｜\-—–\s]*(?:(?:秋季|春季)?(?:校园招聘|校招官网|校招|社会招聘|社招官网|社招|应届招聘|实习招聘)|人才招聘|招聘官网|招聘平台|招聘中心|招聘网站|招聘主页|招聘)\s*$/i, '')
-    .trim();
 }
 
 function normalizePositionComparable(v) {

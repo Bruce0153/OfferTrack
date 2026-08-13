@@ -610,7 +610,7 @@
     }
   });
 
-  // v2.2.1: semantic extraction is strictly on-demand.
+  // Semantic extraction is strictly on-demand.
   globalThis.__offerTrackEnhanceRecords = enhanceRecords;
   globalThis.__offerTrackSemanticSnapshot = () => collectSemanticSnapshot(false);
   globalThis.__offerTrackInvalidateSemanticCache = () => { cache = null; cacheAt = 0; cacheHref = ''; };

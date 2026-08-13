@@ -12,7 +12,7 @@ importScripts(
   'change-journal.js',
   'followup-review.js',
   'followup-queue.js',
-  'v25-orchestrator.js',
+  'followup-orchestrator.js',
   'followup-background.js',
-  'v26-lite.js'
+  'followup-actions.js'
 );

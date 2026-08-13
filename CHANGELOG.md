@@ -6,6 +6,9 @@
 - 内部消息改为 `GET_FOLLOWUP_QUEUE` / `CLEAR_FOLLOWUP_QUEUE`，移除版本化协议名。
 - 删除确认无引用的 debug global 与 `normalizeCompanyComparable()` dead code。
 - Safe GET 执行函数内部再次强制 same-origin，避免未来调用方绕过上游筛选。
+- 第二批低风险整理：Structured State 的状态映射统一委托给 `Status State Machine`，删除 `application-data.js` 中重复的状态正则，避免两套状态语义长期漂移。
+- `followup-core.js` 集中维护飞书读取字段映射，并使用统一的 canonical status 比较状态变化；“面试中 / 待面试”等等价标签不再被误判为状态更新，未知状态也不会触发写入。
+- Service Worker 明确保证 `status-state-machine.js` 先于状态消费者加载，并新增对应依赖顺序、状态一致性与误更新回归测试。
 
 # Changelog
 

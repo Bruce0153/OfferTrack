@@ -1,17 +1,17 @@
-OfferTrack v2.5.0
+OfferTrack v2.6.2
 
-OfferTrack v2.5.0 - 快速使用说明
+OfferTrack v2.6.2 - 快速使用说明
 =================================
 
 OfferTrack 是一个 Microsoft Edge 秋招投递管理插件，可以解析招聘官网投递记录、同步到飞书多维表格，并自动跟进仍在进行中的招聘流程。
 
 一、安装插件
 ------------
-1. 解压 OfferTrack_Edge_v2.5.0.zip。
+1. 解压 OfferTrack_Edge_v2.6.2.zip。
 2. Edge 打开：edge://extensions/
 3. 开启“开发人员模式”。
 4. 点击“加载解压缩的扩展”。
-5. 选择解压后的 OfferTrack v2.5.0 文件夹。
+5. 选择解压后的 OfferTrack v2.6.2 文件夹。
 6. 从旧版本升级时，建议覆盖原固定插件目录后点击“重新加载”，以保留现有本地配置。
 
 二、飞书配置
@@ -23,6 +23,8 @@ OfferTrack 是一个 Microsoft Edge 秋招投递管理插件，可以解析招�
 5. 权限修改后如提示待发布，请发布新的飞书应用版本。
 6. 在目标多维表格右上角菜单选择“添加文档应用”，添加 OfferTrack 并给编辑权限。
 7. 在插件设置中粘贴多维表格链接，依次点击：从链接解析 → 测试连接 → 初始化表头 → 保存设置。
+8. App Secret 默认仅保留在当前浏览器会话；需要浏览器重启后仍自动跟进时，再勾选“在本机记住 App Secret”。
+9. 第一次在某招聘站点手动同步时，允许该站点的精确 HTTPS Origin 权限，后台自动跟进才会长期访问该站点。
 
 三、日常同步
 ------------
@@ -33,15 +35,14 @@ OfferTrack 是一个 Microsoft Edge 秋招投递管理插件，可以解析招�
 推荐设置：
 - 开启自动跟进
 - 检查间隔：6 小时
-- 安全模式；需要无人值守时再使用后台标签页模式
-- 开启“优先尝试安全 GET API”
-- 开启“读取页面 Structured State”
+- 默认可使用“仅已打开页面”；需要无人值守时使用后台标签页模式
+- 四级安全流程固定启用，无需分别配置 Cookie / API / Structured State 开关
 - 开启状态变化通知
 
 检查顺序始终是：
-API GET → Structured State → Page Scan
+Cookie 会话证据 → API GET → Structured State → Page Scan
 
-v2.5 会把 Alarm、手动检查、Cookie Change、Page Open 和异常 Retry 统一交给站点级 Job Queue。同一招聘网站的多个岗位合并处理，后台网站检查保持单活跃任务；普通网络/检查异常使用有上限的指数退避，登录失效、验证码和访问限制不会自动反复重试。
+OfferTrack 会把 Alarm、手动检查、Cookie Change、Page Open 和异常 Retry 统一交给站点级 Job Queue。同一招聘网站的多个岗位合并处理，后台网站检查保持单活跃任务；普通网络/检查异常使用有上限的指数退避，登录失效、验证码和访问限制不会自动反复重试。
 
 五、岗位匹配与状态保护
 ----------------------
@@ -59,7 +60,7 @@ Provider Application ID → Application/Delivery ID → Job/Position ID → Cano
 六、招聘网站会话状态
 --------------------
 - 登录失效、验证码、安全验证或访问限制后，自动任务会冷却该网站，避免反复打开。
-- 重新登录后，如果相关 Cookie 发生变化，v2.5 可以把该已知招聘站点标记为 pending_recheck 并快速复检。
+- 重新登录后，如果相关 Cookie 发生变化，OfferTrack 可以把该已知招聘站点标记为 pending_recheck 并快速复检。
 - Cookie 只作为 Session Evidence：只生成 Cookie 数量、session-like 数量、HttpOnly/Secure 数量、过期状态和 strong/possible/weak/none 摘要。
 - Cookie value 不写入 chrome.storage、不写飞书、不写日志、不显示通知，也不发送给第三方。
 - OfferTrack 不保存招聘网站账号密码、验证码或 Token。
@@ -72,7 +73,7 @@ Provider Application ID → Application/Delivery ID → Job/Position ID → Cano
 
 八、升级后建议验证
 -----------------
-首次升级 v2.5 后，建议先在 Edge 中选择少量已知招聘站点验证：
+首次升级 v2.6.2 后，建议先在 Edge 中选择少量已知招聘站点验证：
 1. 手工同步仍能正常解析并写入飞书。
 2. “立即跟进”能正常检查进行中岗位。
 3. 同一站点多个岗位不会重复打开多个后台页面。

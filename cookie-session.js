@@ -89,15 +89,7 @@
     return cleanHost(c.domain || '');
   }
 
-  function installChangeListener(handler) {
-    if (!globalThis.chrome?.cookies?.onChanged || typeof handler !== 'function') return false;
-    chrome.cookies.onChanged.addListener(changeInfo => {
-      const host = changedCookieHost(changeInfo);
-      if (!host) return;
-      Promise.resolve(handler({ host, removed: !!changeInfo.removed, cause: String(changeInfo.cause || '') })).catch(() => {});
-    });
-    return true;
-  }
+
 
   return {
     AUTH_NAME_RE,
@@ -107,7 +99,6 @@
     summarize,
     inspectUrls,
     inspectGroup,
-    changedCookieHost,
-    installChangeListener
+    changedCookieHost
   };
 });

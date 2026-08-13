@@ -1,6 +1,8 @@
 const $ = id => document.getElementById(id);
+const HostAccess = globalThis.OfferTrackHostAccess;
 let settings = {};
 let actionsVisible = false;
+const Credentials = globalThis.OfferTrackCredentialStore;
 
 const fmtTime = ts => {
   try { return ts ? new Date(Number(ts)).toLocaleString('zh-CN', { hour12: false }) : ''; }
@@ -12,7 +14,7 @@ const modeText = mode => mode === 'background_tabs' ? '后台标签页' : '仅�
 document.addEventListener('DOMContentLoaded', async () => {
   const stored = await chrome.storage.local.get(['settings']);
   settings = stored.settings || { customSites: {}, companyAliases: {}, trustedAutoSyncHosts: [] };
-  fill();
+  await fill();
   $('save').onclick = save;
   $('parseUrl').onclick = parseUrl;
   $('test').onclick = testConnection;
@@ -32,8 +34,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   await refreshFollowUpSummary();
 });
 
-function fill() {
-  for (const k of ['appId','appSecret','appToken','tableId','baseUrl']) $(k).value = settings[k] || '';
+async function fill() {
+  for (const k of ['appId','appToken','tableId','baseUrl']) $(k).value = settings[k] || '';
+  $('appSecret').value = '';
+  const credentialState = await Credentials?.state?.().catch(() => ({ hasSecret: false, remembered: false })) || { hasSecret: false, remembered: false };
+  $('rememberAppSecret').checked = !!credentialState.remembered;
+  $('appSecret').placeholder = credentialState.hasSecret ? '已保存，留空保持不变' : '默认仅本次浏览器会话保存';
   $('enabled').checked = settings.enabled !== false;
   $('autoSync').checked = !!settings.autoSync;
   $('followUpEnabled').checked = !!settings.followUpEnabled;
@@ -49,7 +55,7 @@ function fill() {
 function collect() {
   return {
     ...settings,
-    appId: $('appId').value.trim(), appSecret: $('appSecret').value.trim(),
+    appId: $('appId').value.trim(),
     appToken: $('appToken').value.trim(), tableId: $('tableId').value.trim(), baseUrl: $('baseUrl').value.trim(),
     enabled: $('enabled').checked, autoSync: $('autoSync').checked,
     followUpEnabled: $('followUpEnabled').checked,
@@ -72,6 +78,15 @@ function collect() {
 
 async function save() {
   settings = collect();
+  delete settings.appSecret;
+  const typedSecret = $('appSecret').value.trim();
+  if (typedSecret) {
+    await Credentials?.setSecret?.(typedSecret, { remember: $('rememberAppSecret').checked });
+    $('appSecret').value = '';
+    $('appSecret').placeholder = '已保存，留空保持不变';
+  } else {
+    await Credentials?.setRemember?.($('rememberAppSecret').checked);
+  }
   await chrome.storage.local.set({ settings });
   $('saveMsg').textContent = '已保存';
   setTimeout(() => $('saveMsg').textContent = '', 1400);
@@ -79,6 +94,7 @@ async function save() {
 }
 
 async function parseUrl() {
+  await save();
   const raw = $('baseUrl').value.trim();
   if (!raw) return setStatus('请先粘贴多维表格链接', true);
   setStatus('正在解析链接…');
@@ -159,7 +175,9 @@ async function refreshFollowUpSummary(showError = true) {
     const healthyText = q.healthy ? `${q.healthy} 个网站正常` : '暂无会话记录';
     const pieces = [res.running ? '正在后台检查' : healthyText];
     if (problems) pieces.push(`${problems} 个登录/验证问题`);
+    if (res.permissionCount) pieces.push(`${res.permissionCount} 个网站待授权`);
     if (res.reviewCount) pieces.push(`${res.reviewCount} 项待确认`);
+    if (res.lastFollowUp?.ok === false && res.lastFollowUp?.message) pieces.push(`上次失败：${res.lastFollowUp.message}`);
     $('followUpSummary').textContent = pieces.join(' · ');
     const schedule = [];
     if (res.lastFollowUp?.at) schedule.push(`上次 ${fmtTime(res.lastFollowUp.at)} · 变化 ${res.lastFollowUp.changed ?? 0}`);
@@ -204,6 +222,16 @@ async function loadActions() {
         else setStatus('完成登录/验证后会自动复检，无需再次手动刷新。');
       };
       buttons.appendChild(open);
+    } else if (item.kind === 'permission') {
+      const grant = document.createElement('button'); grant.className = 'primary mini'; grant.textContent = '授权';
+      grant.onclick = async () => {
+        const ok = await HostAccess?.request?.(item.url || `https://${item.host}/`).catch(() => false);
+        if (!ok) return setStatus('未授予此招聘网站的后台访问权限', true);
+        await chrome.storage.local.set({ followUpRunRequest: { id: `permission-${Date.now()}`, at: Date.now() } });
+        setStatus('✓ 已授权，正在重新检查该招聘网站');
+        setTimeout(() => refreshFollowUpSummary(false), 900);
+      };
+      buttons.appendChild(grant);
     } else {
       const confirm = document.createElement('button'); confirm.className = 'primary mini'; confirm.textContent = '确认';
       confirm.onclick = () => resolveReview(item.id, 'confirm');

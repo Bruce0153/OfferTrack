@@ -1,5 +1,6 @@
 (() => {
   const CompanyIdentity = globalThis.OfferTrackCompanyIdentity;
+  const ApplicationContract = globalThis.OfferTrackApplicationContract;
   const APP_PAGE_RE = /(我的投递|投递记录|应聘记录|申请记录|我的申请|应聘进度|求职进度|招聘进度|候选人中心|网申投递|申请进度)/i;
   const APP_URL_RE = /(mydeliver|mydelivery|myapply|my-apply|application|applications|applyrecord|delivery|deliveries|candidate.*(?:apply|deliver)|process|progress|applicationcenter|jobapply)/i;
   const APP_ROUTE_RE = /\/(?:account|personal|candidate|user|profile)\/(?:apply|application|applications|delivery|deliveries|record|records)(?:[/?#]|$)/i;
@@ -30,7 +31,6 @@
   const GENERIC_COMPANY_RE = /^(logo|icon|brand|home|记录|投递记录|网申投递|官网投递|申请记录|我的投递|我的申请|候选人中心|个人中心|校园招聘|社会招聘|应届招聘|实习招聘|招聘|职位|岗位|职位列表|岗位列表|首页|菜单|更多|详情|求职|应届|应届生|校招|社招|实习|校园|社会|春招|秋招|career|careers|jobs?)$/i;
   const COMPANY_NOISE_RE = /^(?:相关公司|关联公司|推荐公司|相似公司|其他公司|更多公司|热门公司|合作公司|所属公司|招聘公司|目标公司|公司信息|公司介绍|企业信息|企业介绍|雇主信息|关于我们|合作伙伴|推荐企业|关联企业|相关企业)[：:]?$/i;
   const COMPANY_CONTEXT_BAD_RE = /(related|recommend|similar|other|partner|supplier|customer|competitor|affiliate|suggest|history|hot|search|list|关联|相关|推荐|相似|其他|合作|供应商|客户|竞品|搜索|列表)/i;
-  const COMPANY_KEY_RE = /^(?:company(?:name|shortname|fullname|displayname)?|company_name|company_short_name|company_full_name|corp(?:name|shortname|fullname)?|corp_name|enterprise(?:name|shortname|fullname)?|employer(?:name|shortname|fullname)?|organization(?:name|shortname|fullname)?|organisation(?:name|shortname|fullname)?|orgname|org_name|brandname|brand_name|tenantname|tenant_name|sitename|site_name|publisher)$/i;
   const COMPANY_CONTEXT_NOISE_RE = /(?:板块|事业群|事业部|业务部|部门|中心|职类|类别|序列|方向|项目)$/i;
   const COHORT_RE = /^(?:20\d{2}|\d{2})届(?:应届生?)?(?:校园招聘|校招|招聘)?$|^(?:应届|应届生|校招|社招|实习|春招|秋招)$/i;
   const POSITION_NOISE_RE = /(?:第\s*\d+\s*志愿|第[一二三四五六七八九十]+志愿|官网投递|网申投递|校园投递|社会招聘|校招投递|社招投递|投递渠道|申请渠道)/ig;
@@ -807,7 +807,7 @@
         if (k === '@context') continue;
         const nextPath = [...path, k];
         const nextPathText = nextPath.join('.');
-        if ((typeof v === 'string' || typeof v === 'number') && COMPANY_KEY_RE.test(k)) {
+        if ((typeof v === 'string' || typeof v === 'number') && ApplicationContract?.fieldKind?.(k, nextPathText) === 'company') {
           add(String(v), 'runtime-json', 1.2, nextPathText);
         } else if (v && typeof v === 'object' && !COMPANY_CONTEXT_BAD_RE.test(nextPathText)) {
           visit(v, depth + 1, nextPath, visited);
@@ -1445,17 +1445,27 @@
       badge = document.createElement('div');
       badge.id = 'offertrack-badge';
       badge.classList.add('ot-collapsed');
-      badge.innerHTML = `
-        <button class="ot-launcher" type="button" title="打开 OfferTrack" aria-label="打开 OfferTrack">
-          <span class="ot-launch-icon">🎯</span>
-          <span class="ot-launch-count">0</span>
-        </button>
-        <div class="ot-panel" role="dialog" aria-label="OfferTrack 投递助手">
-          <div class="ot-head"><strong>🎯 OfferTrack</strong><button class="ot-close" type="button" title="收起">×</button></div>
-          <div class="ot-main"><span class="ot-count">0</span> 条投递记录</div>
-          <div class="ot-sub">已自动解析</div>
-          <div class="ot-actions"><button class="ot-sync" type="button">同步到飞书</button><button class="ot-settings" type="button">设置</button></div>
-        </div>`;
+      const launcher = document.createElement('button');
+      launcher.className = 'ot-launcher'; launcher.type = 'button'; launcher.title = '打开 OfferTrack'; launcher.setAttribute('aria-label', '打开 OfferTrack');
+      const launchIcon = document.createElement('span'); launchIcon.className = 'ot-launch-icon'; launchIcon.textContent = '🎯';
+      const launchCount = document.createElement('span'); launchCount.className = 'ot-launch-count'; launchCount.textContent = '0';
+      launcher.append(launchIcon, launchCount);
+
+      const panel = document.createElement('div'); panel.className = 'ot-panel'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'OfferTrack 投递助手');
+      const head = document.createElement('div'); head.className = 'ot-head';
+      const title = document.createElement('strong'); title.textContent = '🎯 OfferTrack';
+      const close = document.createElement('button'); close.className = 'ot-close'; close.type = 'button'; close.title = '收起'; close.textContent = '×';
+      head.append(title, close);
+      const main = document.createElement('div'); main.className = 'ot-main';
+      const countNode = document.createElement('span'); countNode.className = 'ot-count'; countNode.textContent = '0';
+      main.append(countNode, document.createTextNode(' 条投递记录'));
+      const sub = document.createElement('div'); sub.className = 'ot-sub'; sub.textContent = '已自动解析';
+      const actions = document.createElement('div'); actions.className = 'ot-actions';
+      const sync = document.createElement('button'); sync.className = 'ot-sync'; sync.type = 'button'; sync.textContent = '同步到飞书';
+      const settings = document.createElement('button'); settings.className = 'ot-settings'; settings.type = 'button'; settings.textContent = '设置';
+      actions.append(sync, settings);
+      panel.append(head, main, sub, actions);
+      badge.append(launcher, panel);
       document.documentElement.appendChild(badge);
       badge.querySelector('.ot-launcher').onclick = () => badge.classList.remove('ot-collapsed');
       badge.querySelector('.ot-close').onclick = () => badge.classList.add('ot-collapsed');

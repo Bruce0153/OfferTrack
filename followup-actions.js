@@ -2,55 +2,15 @@
   'use strict';
 
   const Core = globalThis.OfferTrackFollowUpCore;
-  const StateMachine = globalThis.OfferTrackStatusStateMachine;
   const Review = globalThis.OfferTrackFollowUpReview;
   const Sessions = globalThis.OfferTrackSessionManager;
   const Journal = globalThis.OfferTrackChangeJournal;
+  const Decision = globalThis.OfferTrackFollowUpDecision;
+  const Contract = globalThis.OfferTrackApplicationContract;
+  const F = Contract?.FEISHU_FIELDS || Core?.FIELDS || {};
   const FollowUp = globalThis.OfferTrackFollowUp;
 
   const clean = (v, max = 180) => String(v || '').replace(/[\t\r\n\u00a0]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, max);
-  const hostOf = url => {
-    try { return new URL(String(url || '')).hostname.toLowerCase().replace(/^www\./, ''); }
-    catch { return ''; }
-  };
-
-  function installReviewGuard() {
-    if (!Core?.statusChanged || !Review?.add) return;
-    const previous = Core.statusChanged;
-    if (previous.__offerTrackReviewGuardWrapped) return;
-
-    const wrapped = function(target, scanned) {
-      const allowed = previous(target, scanned);
-      if (allowed || !scanned) return allowed;
-      const decision = scanned._offerTrackStatusDecision || null;
-      const reason = String(decision?.reason || '');
-      let reasonCode = '';
-      if (/low_match_confidence|initial_status_low_confidence|match_confidence_below_terminal_threshold/.test(reason)) reasonCode = 'LOW_CONFIDENCE';
-      else if (/ended_without_explicit_evidence|withdrawn_without_explicit_evidence/.test(reason)) reasonCode = 'TERMINAL_REVIEW';
-      if (!reasonCode || !target?.recordId) return allowed;
-
-      const meta = scanned._offerTrackMatch || {};
-      Review.add({
-        key: `${target.recordId}|${reasonCode}|${scanned.status || ''}`,
-        recordId: target.recordId,
-        host: hostOf(target.url || scanned.url),
-        provider: target.platform || scanned.platform || '',
-        company: target.company || scanned.company || '',
-        position: target.position || scanned.position || '',
-        currentStatus: target.status || '',
-        detectedStatus: scanned.status || '',
-        rawStatus: scanned.rawStatus || '',
-        candidateCompany: scanned.company || '',
-        candidatePosition: scanned.position || '',
-        matchMethod: meta.method || '',
-        confidence: Number(meta.confidence || 0),
-        reasonCode
-      }).catch(() => null);
-      return allowed;
-    };
-    wrapped.__offerTrackReviewGuardWrapped = true;
-    Core.statusChanged = wrapped;
-  }
 
   async function summary() {
     const state = FollowUp?.getState ? await FollowUp.getState() : { enabled: false, intervalHours: 6, mode: 'open_tabs', running: false };
@@ -58,6 +18,7 @@
     const reviews = Review?.read ? await Review.read().catch(() => []) : [];
     const q = session?.summary || {};
     const sessionActions = Number(q.loginRequired || 0) + Number(q.challenge || 0) + Number(q.rateLimited || 0);
+    const permissionActions = (state?.lastFollowUp?.details || []).filter(x => x?.status === 'permission_required').length;
     return {
       ...state,
       session: {
@@ -69,14 +30,29 @@
         error: Number(q.error || 0)
       },
       reviewCount: reviews.length,
-      actionableCount: sessionActions + reviews.length
+      permissionCount: permissionActions,
+      actionableCount: sessionActions + permissionActions + reviews.length
     };
   }
 
   async function actions() {
     const state = Sessions?.state ? await Sessions.state().catch(() => null) : null;
     const reviews = Review?.read ? await Review.read().catch(() => []) : [];
+    const followState = FollowUp?.getState ? await FollowUp.getState().catch(() => null) : null;
     const out = [];
+    const permissionSeen = new Set();
+    for (const detail of followState?.lastFollowUp?.details || []) {
+      if (detail?.status !== 'permission_required' || !detail.host || permissionSeen.has(detail.host)) continue;
+      permissionSeen.add(detail.host);
+      out.push({
+        id: `permission:${detail.host}`,
+        kind: 'permission',
+        host: detail.host,
+        title: detail.provider || detail.host,
+        subtitle: '需要授权此招聘网站，才能在后台自动跟进',
+        url: detail.url || `https://${detail.host}/`
+      });
+    }
     for (const entry of state?.entries || []) {
       if (!['login_required','challenge','rate_limited'].includes(entry.state)) continue;
       out.push({
@@ -135,9 +111,8 @@
       return { ok: false, error: '对应飞书记录已不存在' };
     }
     const current = Core.fromFeishu(raw);
-    const decision = StateMachine?.decide(current.status, item.detectedStatus, {
-      matchConfidence: 1,
-      rawStatus: item.rawStatus,
+    const decision = Decision?.statusDecision(current, { status: item.detectedStatus, rawStatus: item.rawStatus }, {
+      confidence: 1,
       userConfirmed: true
     });
     if (!decision?.changed) {
@@ -151,13 +126,9 @@
 
     const nowText = new Date().toLocaleString('zh-CN', { hour12: false });
     const fields = {
-      '当前状态': clean(item.detectedStatus || current.status || '已投递', 80),
-      '原始状态': clean(item.rawStatus, 160),
-      '状态更新时间': nowText,
-      '最近更新时间': nowText,
-      '最后检查时间': nowText,
-      '检查状态': '人工确认更新',
-      '登录状态': '可访问',
+      [F.status]: clean(item.detectedStatus || current.status || '已投递', 80),
+      [F.rawStatus]: clean(item.rawStatus, 160),
+      [F.updatedAt]: nowText
     };
     await feishuRequest(settings, token,
       `/bitable/v1/apps/${encodeURIComponent(settings.appToken)}/tables/${encodeURIComponent(settings.tableId)}/records/batch_update`,
@@ -189,6 +160,5 @@
     });
   }
 
-  installReviewGuard();
   registerMessages();
 })();

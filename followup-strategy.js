@@ -1,8 +1,10 @@
 (function(root, factory) {
-  const api = factory();
+  const matcher = root?.OfferTrackApplicationMatcher
+    || (typeof module !== 'undefined' && module.exports ? require('./application-matcher.js') : null);
+  const api = factory(matcher);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.OfferTrackFollowUpStrategy = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function() {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(Matcher) {
   'use strict';
 
   const POSITIVE_API_RE = /(application|apply|delivery|candidate|resume|process|progress|job.*apply|position.*apply|my.*apply|my.*deliver)/i;
@@ -69,15 +71,15 @@
     return [...map.values()].sort((a,b)=>b.score-a.score).slice(0,Math.max(1,Math.min(6,Number(limit||3))));
   }
 
-  function coverage(targets=[], records=[], core=null) {
-    if (!targets.length || !records.length || !core?.matchScanned) return { matched:0,total:targets.length,ratio:0,matches:[] };
-    const matches=core.matchScanned(targets,records);
-    const matched=matches.filter(m=>m.scanned && m.score>=55).length;
+  function coverage(targets=[], records=[]) {
+    if (!targets.length || !records.length || !Matcher?.matchScanned) return { matched:0,total:targets.length,ratio:0,matches:[] };
+    const matches=Matcher.matchScanned(targets,records);
+    const matched=matches.filter(m=>!!m.scanned).length;
     return { matched,total:targets.length,ratio:targets.length?matched/targets.length:0,matches };
   }
 
-  function isUseful(targets, records, core, minRatio=.8) {
-    const c=coverage(targets,records,core);
+  function isUseful(targets, records, _core, minRatio=.8) {
+    const c=coverage(targets,records);
     if (!records?.length || !c.matched) return { ok:false,...c };
     const required = c.total <= 1 ? 1 : Math.max(1, Math.ceil(c.total * minRatio));
     return { ok:c.matched>=required,...c,required };

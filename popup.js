@@ -1,6 +1,7 @@
 let currentRecords = [];
 let currentPage = {};
 let rejectedCount = 0;
+const HostAccess = globalThis.OfferTrackHostAccess;
 
 const $ = id => document.getElementById(id);
 
@@ -28,7 +29,7 @@ async function ensurePageBridge(tabId) {
   if (!chrome.scripting?.executeScript) throw new Error('当前浏览器无法恢复页面解析器，请刷新招聘页面后重试');
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['company-identity.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+    files: ['company-identity.js', 'application-contract.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
     world: 'ISOLATED'
   });
   if (chrome.scripting?.insertCSS) {
@@ -114,15 +115,20 @@ async function sync() {
   $('sync').textContent = '同步中…';
   setMessage('正在去重并同步到飞书…');
   try {
+    const tab = await activeTab();
+    let persistentHostAccess = false;
+    if (tab?.url && /^https:/i.test(tab.url)) {
+      persistentHostAccess = await HostAccess?.request?.(tab.url).catch(() => false) || false;
+    }
     const res = await chrome.runtime.sendMessage({
-      type: 'SYNC_RECORDS', records: currentRecords, page: currentPage, source: 'manual'
+      type: 'SYNC_RECORDS', records: currentRecords, page: { ...currentPage, persistentHostAccess }, source: 'manual'
     });
     if (!res?.ok) throw new Error(res?.error || '同步失败');
     $('created').textContent = res.created ?? 0;
     $('updated').textContent = res.updated ?? 0;
     $('skipped').textContent = res.skipped ?? 0;
     $('lastSync').textContent = '刚刚同步';
-    setMessage(res.message || '同步完成');
+    setMessage(`${res.message || '同步完成'}${persistentHostAccess ? '' : '；未授予该招聘网站的长期访问权限，自动跟进将跳过此站点'}`);
   } catch (e) {
     setMessage(e.message || String(e), true);
   } finally {
@@ -158,7 +164,9 @@ async function loadFollowUpState() {
     if (res.running) parts.push('正在后台检查');
     else if (q.healthy) parts.push(`${q.healthy} 个网站正常`);
     if (sessionProblems) parts.push(`${sessionProblems} 个登录/验证问题`);
+    if (res.permissionCount) parts.push(`${res.permissionCount} 个网站待授权`);
     if (res.reviewCount) parts.push(`${res.reviewCount} 项待确认`);
+    if (res.lastFollowUp?.ok === false && res.lastFollowUp?.message) parts.push(`上次失败：${res.lastFollowUp.message}`);
     if (res.lastFollowUp?.at) parts.push(`上次 ${new Date(res.lastFollowUp.at).toLocaleString('zh-CN', { hour12:false })} · 变化 ${res.lastFollowUp.changed ?? 0}`);
     if (res.nextAt) parts.push(`下次 ${new Date(res.nextAt).toLocaleString('zh-CN', { hour12:false })}`);
     parts.push(mode);

@@ -145,16 +145,8 @@
     return normalizeJob(stored);
   }
 
-  async function knownHost(host) {
-    const key = normalizeHost(host);
-    if (!key) return false;
-    const jobs = await read();
-    return jobs.some(x => x.host === key);
-  }
 
   function setActiveJob(job) { activeJob = job ? normalizeJob(job) : null; return activeJob; }
-  function getActiveJob() { return activeJob; }
-  function clearActiveJob() { activeJob = null; }
 
   function selectGroups(groups = [], cfg = {}, source = 'alarm') {
     const limit = Math.min(30, Math.max(1, Number(cfg.followUpMaxSitesPerRun || 12)));
@@ -228,7 +220,7 @@
   return {
     STORAGE_KEY, LEGACY_STORAGE_KEYS, QUEUE_ALARM, LEGACY_QUEUE_ALARMS, MAX_JOBS, MAX_RETRIES, PRIORITY,
     normalizeHost, reasonKey, priorityFor, backoffMs, normalizeJob, mergeJobs, sortJobs,
-    scheduleNext, read, write, enqueue, knownHost, setActiveJob, getActiveJob, clearActiveJob,
+    scheduleNext, read, write, enqueue,
     selectGroups, markRunning, shouldRetry, completeGroup, nextReady, withActiveJob, clear
   };
 });

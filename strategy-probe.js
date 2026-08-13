@@ -2,6 +2,7 @@
   'use strict';
   if (globalThis.__offerTrackStrategyProbeInstalled) return;
   globalThis.__offerTrackStrategyProbeInstalled = true;
+  const Contract = globalThis.OfferTrackApplicationContract;
 
   const API_HINT_RE = /(application|apply|delivery|candidate|resume|process|progress|job.*apply|position.*apply|my.*apply|my.*deliver)/i;
   const API_BAD_RE = /(logout|signout|delete|remove|withdraw|cancel|submit|create|update|modify|save|upload|track|analytics|collect|report|metric|beacon|captcha|verify|sms|sendcode)/i;
@@ -20,7 +21,11 @@
       if (!raw || raw.length>180_000) continue;
       budget-=raw.length;
       const parsed=safeJson(raw);
-      if (parsed != null) out.push({ source:`script#${el.id||el.type||'json'}`, data:parsed });
+      if (parsed == null || !Contract?.projectStructured) continue;
+      const projected=Contract.projectStructured(parsed,{ rootName:el.id||el.type||'json', maxNodes:650, maxDepth:6, maxArray:32, maxKeys:64, maxString:240 });
+      if (projected && (Array.isArray(projected) ? projected.length : Object.keys(projected).length)) {
+        out.push({ source:`script#${el.id||el.type||'json'}`, data:projected });
+      }
     }
     return out.slice(0,12);
   }

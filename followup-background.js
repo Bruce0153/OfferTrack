@@ -7,9 +7,13 @@
   const Strategy = globalThis.OfferTrackFollowUpStrategy;
   const Sessions = globalThis.OfferTrackSessionManager;
   const CookieSession = globalThis.OfferTrackCookieSession;
+  const Contract = globalThis.OfferTrackApplicationContract;
+  const HostAccess = globalThis.OfferTrackHostAccess;
+  const Decision = globalThis.OfferTrackFollowUpDecision;
+  const Review = globalThis.OfferTrackFollowUpReview;
+  const F = Contract?.FEISHU_FIELDS || Core?.FIELDS || {};
   const ALARM = 'offertrack-follow-up';
   const LEASE_MS = 20 * 60 * 1000;
-  const FOLLOWUP_FIELDS = ['自动跟进','最后检查时间','状态更新时间','检查状态','登录状态'];
   let runningPromise = null;
 
   function normalizedSettings(input = {}) {
@@ -98,19 +102,6 @@
     return runningPromise;
   }
 
-  async function ensureFollowUpFields(settings, token) {
-    const fields = await listFields(settings, token);
-    const names = new Set(fields.map(f => f.field_name));
-    for (const name of FOLLOWUP_FIELDS) {
-      if (names.has(name)) continue;
-      await feishuRequest(settings, token,
-        `/bitable/v1/apps/${encodeURIComponent(settings.appToken)}/tables/${encodeURIComponent(settings.tableId)}/fields`,
-        { method: 'POST', body: { field_name: name, type: 1 } }
-      );
-      names.add(name);
-    }
-  }
-
   async function execute(source) {
     const settings = await prepareStoredSettings();
     validateSettings(settings);
@@ -119,8 +110,8 @@
 
     const token = await getTenantToken(settings);
     await ensureFields(settings);
-    await ensureFollowUpFields(settings, token);
     const existing = await listAllRecords(settings, token);
+    await Review?.retainRecordIds?.(existing.map(x => x?.record_id).filter(Boolean)).catch(() => null);
     const targets = Core.selectTargets(existing, cfg);
     const rawGroups = Core.groupTargets(targets);
     const allGroups = Providers?.enrichGroups ? Providers.enrichGroups(rawGroups, Core) : rawGroups;
@@ -170,6 +161,18 @@
   }
 
   async function inspectGroup(group, cfg, source = 'manual') {
+    // Background follow-up requires an explicit persistent grant for this recruitment origin.
+    // Manual popup scans still use activeTab and are not blocked by this gate.
+    if (HostAccess?.has && !(await HostAccess.has(group?.url || `https://${group?.host || ''}/`))) {
+      return {
+        host: group.host,
+        provider: group.provider,
+        status: 'permission_required',
+        error: '需要授权此招聘网站后才能后台自动跟进',
+        records: [],
+        page: { url: group.url }
+      };
+    }
     const cookieEvidence = cfg.followUpCookiePreflight && CookieSession?.inspectGroup
       ? await CookieSession.inspectGroup(group).catch(() => ({ available: false, level: 'unavailable', checkedAt: Date.now() }))
       : { available: false, level: 'unavailable', checkedAt: Date.now() };
@@ -281,7 +284,7 @@
     if (!chrome.scripting?.executeScript) throw new Error('当前浏览器无法恢复页面解析器');
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['company-identity.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+      files: ['company-identity.js', 'application-contract.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
       world: 'ISOLATED'
     });
     if (chrome.scripting?.insertCSS) {
@@ -304,40 +307,74 @@
     let res = await chrome.tabs.sendMessage(tabId, { type: 'COLLECT_STRATEGY_PROBE' }).catch(() => null);
     if (res?.ok) return res;
     if (chrome.scripting?.executeScript) {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['strategy-probe.js'], world: 'ISOLATED' }).catch(() => null);
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['application-contract.js', 'strategy-probe.js'], world: 'ISOLATED' }).catch(() => null);
       res = await chrome.tabs.sendMessage(tabId, { type: 'COLLECT_STRATEGY_PROBE' }).catch(() => null);
     }
     return res?.ok ? res : { ok: false, resources: [], jsonSnapshots: [], page: null };
   }
 
   async function collectMainWorldSnapshot(tabId) {
-    if (!chrome.scripting?.executeScript) return [];
+    if (!chrome.scripting?.executeScript || !Contract?.projectionPolicy) return [];
+    const policy = Contract.projectionPolicy();
     const injected = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
-      func: () => {
+      args: [policy],
+      func: policyInput => {
         const names = ['__NEXT_DATA__','__NUXT__','__NUXT_DATA__','__INITIAL_STATE__','__PRELOADED_STATE__','__APOLLO_STATE__','__INITIAL_PROPS__','__DATA__','__STORE__'];
-        const SAFE_LEAF_RE = /(position|job|post|vacancy|role|status|state|stage|result|company|corp|employer|organization|tenant|brand|location|city|apply|application|delivery|submit|created|time|date|id|number|progress|process)/i;
-        const SENSITIVE_KEY_RE = /(cookie|token|secret|password|passwd|credential|authorization|phone|mobile|email|e-mail|avatar|profile|resume(?:content|file)?|address|identitycard|idcard|passport|bank|salary|compensation)/i;
+        const re = (source) => source ? new RegExp(source, 'i') : /$a/;
+        const P = {
+          positionKey: re(policyInput?.positionKey), statusKey: re(policyInput?.statusKey),
+          companyKey: re(policyInput?.companyKey), locationKey: re(policyInput?.locationKey),
+          timeKey: re(policyInput?.timeKey), idKey: re(policyInput?.idKey),
+          applicationPath: re(policyInput?.applicationPath), companyParent: re(policyInput?.companyParent),
+          positionParent: re(policyInput?.positionParent), sensitiveKey: re(policyInput?.sensitiveKey),
+          sensitiveContainer: re(policyInput?.sensitiveContainer)
+        };
+        const genericName = /^(?:name|title|label|text|value|displayName)$/i;
+        const genericStatus = /^(?:status|state|stage|result)$/i;
+        const genericTime = /^(?:time|date|createdAt|updatedAt)$/i;
+        const genericId = /^(?:id|no|number)$/i;
         let nodes = 0;
         const seen = new WeakSet();
-        function project(v, depth=0, path='') {
-          if (v == null || nodes++ > 900 || depth > 6) return null;
-          if (typeof v !== 'object') return null;
+        const cleanKey = k => String(k || '').replace(/[-_\s]/g, '').toLowerCase();
+        const sensitive = (key, path) => P.sensitiveKey.test(cleanKey(key)) || P.sensitiveContainer.test(String(path || '').toLowerCase());
+        const kind = (key, path) => {
+          if (sensitive(key, path)) return '';
+          const k = String(key || ''), p = String(path || '');
+          if (P.positionKey.test(k)) return 'position';
+          if (P.statusKey.test(k)) return 'status';
+          if (P.companyKey.test(k)) return 'company';
+          if (P.locationKey.test(k)) return 'location';
+          if (P.timeKey.test(k)) return 'time';
+          if (P.idKey.test(k)) return 'id';
+          const parent = p.split('.').slice(0, -1).join('.');
+          if (genericName.test(k)) {
+            if (P.positionParent.test(parent)) return 'position';
+            if (P.companyParent.test(parent)) return 'company';
+            if (/(location|city|place)/i.test(parent)) return 'location';
+          }
+          if (genericStatus.test(k) && P.applicationPath.test(parent)) return 'status';
+          if (genericTime.test(k) && P.applicationPath.test(parent)) return 'time';
+          if (genericId.test(k) && /(?:application|apply|delivery|position|job|post|vacancy)/i.test(parent)) return 'id';
+          return '';
+        };
+        function project(v, depth = 0, path = '') {
+          if (v == null || nodes++ >= 650 || depth > 6 || typeof v !== 'object') return null;
           if (seen.has(v)) return null;
           seen.add(v);
           if (Array.isArray(v)) {
             const rows = [];
-            for (const x of v.slice(0, 40)) {
+            for (const x of v.slice(0, 28)) {
               const child = project(x, depth + 1, path);
-              if (child && (typeof child !== 'object' || Object.keys(child).length)) rows.push(child);
+              if (child && (Array.isArray(child) ? child.length : Object.keys(child).length)) rows.push(child);
             }
             return rows.length ? rows : null;
           }
           const out = {};
-          for (const key of Object.keys(v).slice(0, 70)) {
-            if (SENSITIVE_KEY_RE.test(key)) continue;
+          for (const key of Object.keys(v).slice(0, 60)) {
             const nextPath = path ? `${path}.${key}` : key;
+            if (sensitive(key, nextPath)) continue;
             let val;
             try { val = v[key]; } catch { continue; }
             if (val == null) continue;
@@ -346,8 +383,8 @@
               if (child && (Array.isArray(child) ? child.length : Object.keys(child).length)) out[key] = child;
               continue;
             }
-            if (!SAFE_LEAF_RE.test(key) && !SAFE_LEAF_RE.test(nextPath)) continue;
-            if (typeof val === 'string') out[key] = val.slice(0, 500);
+            if (!kind(key, nextPath)) continue;
+            if (typeof val === 'string') out[key] = val.slice(0, 240);
             else if (typeof val === 'number' || typeof val === 'boolean') out[key] = val;
           }
           return Object.keys(out).length ? out : null;
@@ -361,7 +398,7 @@
             if (data) snapshots.push({ name, data });
           } catch {}
         }
-        return snapshots;
+        return snapshots.slice(0, 8);
       }
     }).catch(() => []);
     return Array.isArray(injected?.[0]?.result) ? injected[0].result : [];
@@ -397,14 +434,21 @@
         signal: controller.signal
       });
       if (!response.ok) return { ok: false, status: response.status };
+      if (response.url && !Strategy?.sameOrigin?.(response.url, pageUrl)) {
+        return { ok: false, status: response.status, error: 'blocked_cross_origin_redirect' };
+      }
       const length = Number(response.headers.get('content-length') || 0);
       if (length > 1_000_000) return { ok: false, status: response.status, error: 'API 响应过大' };
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
       const body = await response.text();
       if (body.length > 1_200_000) return { ok: false, status: response.status, error: 'API 响应过大' };
       if (/text\/html/.test(contentType) && /(登录|sign\s*in|login)/i.test(body.slice(0, 12000))) return { ok: false, status: response.status, loginHint: true };
-      let data = null;
-      try { data = JSON.parse(body); } catch { return { ok: false, status: response.status, error: '不是 JSON 响应' }; }
+      let parsed = null;
+      try { parsed = JSON.parse(body); } catch { return { ok: false, status: response.status, error: '不是 JSON 响应' }; }
+      const data = Contract?.projectStructured?.(parsed, {
+        rootName: 'api', maxNodes: 2600, maxDepth: 7, maxArray: 64, maxKeys: 80, maxString: 400
+      }) || null;
+      if (!data) return { ok: false, status: response.status, error: 'API 响应不含安全的投递字段' };
       return { ok: true, status: response.status, data };
     } catch (e) {
       return { ok: false, error: e?.name === 'AbortError' ? 'API 请求超时' : (e?.message || String(e)) };
@@ -487,66 +531,65 @@
     const now = new Date().toLocaleString('zh-CN', { hour12: false });
     const patches = [];
     const summary = { checked: 0, changed: 0, failed: 0, loginRequired: 0, sessionBlocked: 0, waiting: 0, unmatched: 0, detail: null };
-    const common = { '最后检查时间': now };
+    const detailBase = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '' };
 
-    if (inspected.status === 'session_paused') {
-      const loginText = inspected.sessionState === 'login_required' ? '已失效' : inspected.sessionState === 'challenge' ? '需验证' : inspected.sessionState === 'rate_limited' ? '访问受限' : '未知';
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '会话暂停', '登录状态': loginText } });
+    // Operational/session diagnostics live in Session/Journal/lastFollowUp, not in the user's Feishu table.
+    if (inspected.status === 'permission_required') {
       summary.waiting = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'session_paused', message: inspected.error };
-    } else if (inspected.status === 'waiting') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '等待打开招聘网站', '登录状态': '未知' } });
+      summary.detail = { ...detailBase, status: 'permission_required', message: inspected.error, url: inspected.page?.url || group.url };
+    } else if (inspected.status === 'session_paused' || inspected.status === 'waiting') {
       summary.waiting = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'waiting', message: inspected.error };
+      summary.detail = { ...detailBase, status: inspected.status, message: inspected.error };
     } else if (inspected.status === 'login') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '需要登录', '登录状态': '已失效' } });
       summary.loginRequired = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'login', message: inspected.error };
+      summary.detail = { ...detailBase, status: 'login', message: inspected.error };
     } else if (inspected.status === 'challenge' || inspected.status === 'rate_limited') {
-      const loginText = inspected.status === 'challenge' ? '需验证' : '访问受限';
-      const checkText = inspected.status === 'challenge' ? '需要安全验证' : '访问暂时受限';
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': checkText, '登录状态': loginText } });
       summary.sessionBlocked = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: inspected.status, message: inspected.error };
+      summary.detail = { ...detailBase, status: inspected.status, message: inspected.error };
     } else if (inspected.status === 'error') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '检查失败', '登录状态': '未知' } });
       summary.failed = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'error', message: inspected.error };
+      summary.detail = { ...detailBase, status: 'error', message: inspected.error };
     } else if (inspected.status === 'empty') {
-      for (const t of group.records) patches.push({ record_id: t.recordId, fields: { ...common, '检查状态': '未解析到投递', '登录状态': '可访问' } });
       summary.unmatched = group.records.length;
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'empty', message: inspected.error };
+      summary.detail = { ...detailBase, status: 'empty', message: inspected.error };
     } else {
-      const matches = Core.matchScanned(group.records, inspected.records || []);
+      const matches = Decision?.matchScanned
+        ? await Decision.matchScanned(group.records, inspected.records || [])
+        : [];
       const changedItems = [];
       for (const m of matches) {
         const target = m.target, scanned = m.scanned;
         if (!scanned) {
-          patches.push({ record_id: target.recordId, fields: { ...common, '检查状态': '未匹配到岗位', '登录状态': '可访问' } });
           summary.unmatched += 1;
           continue;
         }
         summary.checked += 1;
-        const fields = { ...common, '检查状态': '已检查', '登录状态': '可访问' };
-        if (!target.location && scanned.location) fields['工作地点'] = safeCell(scanned.location);
-        if (!target.applyTime && scanned.applyTime) fields['投递时间'] = safeCell(scanned.applyTime);
-        if (Core.statusChanged(target, scanned)) {
-          fields['当前状态'] = safeCell(scanned.status || target.status || '已投递');
-          fields['原始状态'] = safeCell(scanned.rawStatus || '');
-          fields['状态更新时间'] = now;
-          fields['最近更新时间'] = now;
+        const fields = {};
+        if (!target.location && scanned.location) fields[F.location] = safeCell(scanned.location);
+        if (!target.applyTime && scanned.applyTime) fields[F.applyTime] = safeCell(scanned.applyTime);
+
+        const decision = Decision?.evaluateStatus
+          ? await Decision.evaluateStatus(target, scanned)
+          : { changed: false, allowed: false };
+        if (decision.changed && decision.allowed) {
+          fields[F.status] = safeCell(decision.to || scanned.status || target.status || '已投递');
+          fields[F.rawStatus] = safeCell(scanned.rawStatus || '');
           summary.changed += 1;
-          changedItems.push({ company: target.company, position: target.position, from: target.status, to: scanned.status });
-        } else if (scanned.rawStatus && scanned.rawStatus !== target.rawStatus) {
-          fields['原始状态'] = safeCell(scanned.rawStatus);
+          changedItems.push({ company: target.company, position: target.position, from: decision.from || target.status, to: decision.to || scanned.status });
+        } else if (!decision.changed && scanned.rawStatus && scanned.rawStatus !== target.rawStatus) {
+          // Preserve raw provider text only for a confidently matched record whose canonical stage is unchanged.
+          fields[F.rawStatus] = safeCell(scanned.rawStatus);
         }
-        patches.push({ record_id: target.recordId, fields });
+
+        if (Object.keys(fields).length) {
+          fields[F.updatedAt] = now;
+          patches.push({ record_id: target.recordId, fields });
+        }
       }
-      summary.detail = { host: group.host, provider: group.providerName || group.provider?.name || '', strategy: inspected?.strategy || '', status: 'ok', checked: summary.checked, changed: summary.changed, unmatched: summary.unmatched, changes: changedItems.slice(0, 5), evidence: inspected?.evidence || null };
+      summary.detail = { ...detailBase, status: 'ok', checked: summary.checked, changed: summary.changed, unmatched: summary.unmatched, changes: changedItems.slice(0, 5), evidence: inspected?.evidence || null };
     }
 
     for (const chunk of chunks(patches, 500)) {
-      if (!chunk.length) continue;
       await feishuRequest(settings, token,
         `/bitable/v1/apps/${encodeURIComponent(settings.appToken)}/tables/${encodeURIComponent(settings.tableId)}/records/batch_update`,
         { method: 'POST', body: { records: chunk } }

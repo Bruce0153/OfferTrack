@@ -106,11 +106,6 @@
     return items;
   }
 
-  async function removeForRecord(recordId) {
-    const rid = clean(recordId, 120);
-    if (!rid) return read();
-    return write((await read()).filter(x => x.recordId !== rid));
-  }
 
   async function retainRecordIds(recordIds = []) {
     const allowed = new Set((recordIds || []).map(x => clean(x, 120)).filter(Boolean));
@@ -126,6 +121,6 @@
 
   return {
     STORAGE_KEY, LEGACY_STORAGE_KEYS, MAX_ENTRIES, TTL_MS, MIN_REVIEW_CONFIDENCE, REASONS,
-    sanitize, prune, read, write, add, get, remove, removeForRecord, retainRecordIds, clear, labelFor
+    sanitize, prune, read, write, add, get, remove, retainRecordIds, clear, labelFor
   };
 });

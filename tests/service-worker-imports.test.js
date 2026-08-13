@@ -9,6 +9,7 @@ const provider = source.indexOf("provider-registry.js");
 const background = source.indexOf("followup-background.js");
 assert(state >= 0 && core >= 0 && appData >= 0, 'status consumers must be loaded');
 assert(state < core && state < appData, 'Status State Machine must load before normalization consumers');
+assert(state < provider, 'shared status normalization must initialize before provider-driven extraction');
 assert(provider >= 0, 'service worker must load provider-registry.js');
 assert(background >= 0, 'service worker must load followup-background.js');
 assert(provider < background, 'provider registry must load before follow-up background');

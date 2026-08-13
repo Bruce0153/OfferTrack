@@ -1,19 +1,24 @@
 (function(root, factory) {
-  const api = factory();
+  const StatusState = root?.OfferTrackStatusStateMachine
+    || (typeof module !== 'undefined' && module.exports ? require('./status-state-machine.js') : null);
+  const Contract = root?.OfferTrackApplicationContract
+    || (typeof module !== 'undefined' && module.exports ? require('./application-contract.js') : null);
+  const api = factory(StatusState, Contract);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.OfferTrackApplicationData = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function() {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(StatusState, Contract) {
   'use strict';
 
-  const POSITION_KEY_RE = /(position|job|post|vacancy|role).*(name|title)|^(positionName|positionTitle|jobName|jobTitle|postName|postTitle|roleName|vacancyName)$/i;
-  const POSITION_CONTAINER_KEY_RE = /^(position|job|post|vacancy|role)$/i;
-  const STATUS_KEY_RE = /(apply|application|delivery|process|progress|candidate|resume)?.*(status|state|stage|result)|^(status|state|stage|result)$/i;
-  const COMPANY_KEY_RE = /(company|corp|employer|organization|tenant|brand).*(name|title)|^(companyName|companyShortName|corpName|employerName|organizationName|brandName)$/i;
-  const LOCATION_KEY_RE = /(work)?.*(location|city|place)|^(location|city|workLocation|workCity)$/i;
-  const TIME_KEY_RE = /(apply|application|delivery|submit|create|created|applied).*(time|at|date)|^(applyTime|applicationTime|deliveryTime|submitTime|createdAt|createTime|appliedAt)$/i;
-  const ID_KEY_RE = /(application|apply|delivery).*(id|no|number)|^(applicationId|applyId|deliveryId)$/i;
-  const APPLICATION_PATH_RE = /(application|apply|delivery|candidate|resume|process|progress|job|position|post|vacancy)/i;
-  const STATUS_VALUE_RE = /(已投递|投递成功|已申请|申请成功|待筛选|筛选中|评估中|待评估|待测评|测评中|测评完成|待笔试|笔试中|笔试完成|待面试|面试中|面试安排|AI面试|一面|二面|三面|四面|HR面|终面|已发\s*offer|offer已发放|已录用|录用|意向书|不合适|不通过|未通过|流程结束|已结束|已拒绝|拒绝|淘汰|已撤回|撤回成功|已终止|终止|待处理|处理中|流程中|简历筛选|简历评估|笔试|测评|面试)/i;
+  const P = Contract?.STRUCTURED_PATTERNS || {};
+  const NEVER_RE = /$a/;
+  const POSITION_KEY_RE = P.positionKey || NEVER_RE;
+  const POSITION_CONTAINER_KEY_RE = P.positionContainerKey || NEVER_RE;
+  const STATUS_KEY_RE = P.statusKey || NEVER_RE;
+  const COMPANY_KEY_RE = P.companyKey || NEVER_RE;
+  const LOCATION_KEY_RE = P.locationKey || NEVER_RE;
+  const TIME_KEY_RE = P.timeKey || NEVER_RE;
+  const ID_KEY_RE = P.idKey || NEVER_RE;
+  const APPLICATION_PATH_RE = P.applicationPath || NEVER_RE;
   const ROLE_RE = /(工程师|研究员|专家|科学家|架构师|产品经理|项目经理|分析师|设计师|实习生|管培生|顾问|算法|研发|开发|大模型|多模态|机器学习|AI|Agent|NLP|CV|机器人|具身)/i;
   const DATE_RE = /(20\d{2}[-/.年](?:1[0-2]|0?[1-9])[-/.月](?:3[01]|[12]\d|0?[1-9])日?(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?)/;
 
@@ -46,16 +51,7 @@
   }
 
   function normalizeStatus(raw) {
-    const s = norm(raw);
-    if (!s) return '';
-    if (/撤回/.test(s)) return '已撤回';
-    if (/不合适|不通过|未通过|结束|拒绝|淘汰|终止|失败/.test(s)) return '已结束';
-    if (/offer|录用|意向书/.test(s) && !/未通过|不通过|拒绝/.test(s)) return 'Offer';
-    if (/面试|一面|二面|三面|四面|hr面|终面/.test(s)) return '面试中';
-    if (/笔试|测评|考试|测验/.test(s)) return '笔试/测评';
-    if (/筛选|评估|审核|处理中|待处理|流程中/.test(s)) return '筛选中';
-    if (/投递|申请|提交/.test(s)) return '已投递';
-    return '';
+    return StatusState?.normalize?.(text(raw)) || '';
   }
 
   function normalizeDate(v) {
@@ -89,12 +85,18 @@
     return out;
   }
 
-  function bestBy(entries, keyRe, opts={}) {
+  function bestField(entries, kind, opts={}) {
+    if (!Contract?.fieldKind) return null;
     let best = null;
     for (const e of entries) {
       const path = e.path || e.key || '';
-      let score = keyRe.test(e.key) ? 7 : keyRe.test(path) ? 4 : 0;
-      if (!score) continue;
+      if (Contract.fieldKind(e.key, path) !== kind) continue;
+      let score = 7;
+      const explicit = ({
+        position: P.positionKey, status: P.statusKey, company: P.companyKey,
+        location: P.locationKey, time: P.timeKey, id: P.idKey
+      })[kind];
+      if (explicit?.test?.(e.key)) score += 3;
       const val = text(e.value);
       if (!val || val.length > (opts.maxLen || 180)) continue;
       if (opts.filter && !opts.filter(val,path)) continue;
@@ -110,7 +112,8 @@
       const path = e.path || e.key || '';
       const val = text(e.value);
       if (!val || val.length < 3 || val.length > 120) continue;
-      let score = POSITION_KEY_RE.test(e.key) ? 10 : POSITION_KEY_RE.test(path) ? 6 : 0;
+      if (Contract?.fieldKind?.(e.key, path) !== 'position') continue;
+      let score = POSITION_KEY_RE.test(e.key) ? 10 : 6;
       if (/^(name|title)$/i.test(e.key) && APPLICATION_PATH_RE.test(path)) score += 4;
       if (ROLE_RE.test(val)) score += 3;
       let targetSim = 0;
@@ -132,8 +135,9 @@
     const keys = Object.keys(obj).slice(0, 80);
     let hasPosition = false, hasStatus = false;
     for (const key of keys) {
-      if (!hasPosition && (POSITION_KEY_RE.test(key) || POSITION_CONTAINER_KEY_RE.test(key))) hasPosition = true;
-      if (!hasStatus && STATUS_KEY_RE.test(key)) hasStatus = true;
+      const keyPath = path ? `${path}.${key}` : key;
+      if (!hasPosition && (Contract?.fieldKind?.(key, keyPath) === 'position' || POSITION_CONTAINER_KEY_RE.test(key))) hasPosition = true;
+      if (!hasStatus && Contract?.fieldKind?.(key, keyPath) === 'status') hasStatus = true;
       if (hasPosition && hasStatus) return true;
     }
     return false;
@@ -143,14 +147,14 @@
     const entries = shallowEntries(obj, path, 2);
     const position = bestPosition(entries, targets);
     if (!position || position.score < ((targets||[]).length ? 9 : 12)) return null;
-    const status = bestBy(entries, STATUS_KEY_RE, { maxLen: 100, pathBonus: APPLICATION_PATH_RE, filter: v => STATUS_VALUE_RE.test(v) || !!normalizeStatus(v) });
+    const status = bestField(entries, 'status', { maxLen: 100, pathBonus: APPLICATION_PATH_RE, filter: v => !!normalizeStatus(v) });
     if (!status) return null;
     const normalizedStatus = normalizeStatus(status.value);
     if (!normalizedStatus) return null;
-    const company = bestBy(entries, COMPANY_KEY_RE, { maxLen: 100 });
-    const location = bestBy(entries, LOCATION_KEY_RE, { maxLen: 120 });
-    const applyTime = bestBy(entries, TIME_KEY_RE, { maxLen: 80, filter: v => !!normalizeDate(v) });
-    const id = bestBy(entries, ID_KEY_RE, { maxLen: 120 });
+    const company = bestField(entries, 'company', { maxLen: 100 });
+    const location = bestField(entries, 'location', { maxLen: 120 });
+    const applyTime = bestField(entries, 'time', { maxLen: 80, filter: v => !!normalizeDate(v) });
+    const id = bestField(entries, 'id', { maxLen: 120 });
     return {
       company: company?.value || '',
       position: position.value,

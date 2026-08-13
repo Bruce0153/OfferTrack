@@ -1,18 +1,22 @@
 importScripts(
   'company-identity.js',
+  'application-contract.js',
+  'credential-store.js',
+  'host-access.js',
   'cookie-session.js',
+  'status-state-machine.js',
   'background.js',
   'followup-core.js',
   'provider-registry.js',
   'application-data.js',
+  'application-matcher.js',
   'followup-strategy.js',
   'session-manager.js',
-  'application-matcher.js',
-  'status-state-machine.js',
   'change-journal.js',
   'followup-review.js',
+  'followup-decision.js',
   'followup-queue.js',
-  'v25-orchestrator.js',
+  'followup-orchestrator.js',
   'followup-background.js',
-  'v26-lite.js'
+  'followup-actions.js'
 );

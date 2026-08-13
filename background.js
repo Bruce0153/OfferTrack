@@ -1,36 +1,38 @@
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
+const Contract = globalThis.OfferTrackApplicationContract;
+const Credentials = globalThis.OfferTrackCredentialStore;
+const HostAccess = globalThis.OfferTrackHostAccess;
+const F = Contract?.FEISHU_FIELDS;
+if (!F) throw new Error('OfferTrack application contract is required');
 const DEFAULT_STATUS_OPTIONS = ['已投递', '筛选中', '笔试/测评', '面试中', 'Offer', '已结束', '已撤回'];
-const NEXT_ACTION_OPTIONS = ['等待', '准备笔试', '准备面试', '联系HR', '复盘面试', '等待结果', '跟进', '无需处理'];
-const PRIORITY_OPTIONS = ['S', 'A', 'B', 'C'];
 const DEFAULT_SETTINGS = {
-  appId: '', appSecret: '', appToken: '', tableId: '', baseUrl: '',
+  appId: '', appToken: '', tableId: '', baseUrl: '',
   autoSync: false, enabled: true, followUpCookiePreflight: true, customSites: {}, companyAliases: {}, trustedAutoSyncHosts: []
 };
 
 const FIELD_DEFS = [
-  { name: '公司', type: 1 },
-  { name: '岗位名称', type: 1 },
-  { name: '工作地点', type: 1 },
-  { name: '投递时间', type: 1 },
-  { name: '当前状态', type: 3, property: { options: DEFAULT_STATUS_OPTIONS.map(name => ({ name })) } },
-  { name: '招聘平台', type: 1 },
-  { name: '岗位链接', type: 1 },
-  { name: '最近更新时间', type: 1 },
-  { name: '下一步行动', type: 3, property: { options: NEXT_ACTION_OPTIONS.map(name => ({ name })) } },
-  { name: '面试时间', type: 1 },
-  { name: '优先级', type: 3, property: { options: PRIORITY_OPTIONS.map(name => ({ name })) } },
-  { name: '备注', type: 1 },
-  { name: '唯一记录ID', type: 1 },
-  { name: '原始状态', type: 1 }
+  { name: F.company, type: 1 },
+  { name: F.position, type: 1 },
+  { name: F.location, type: 1 },
+  { name: F.applyTime, type: 1 },
+  { name: F.status, type: 3, property: { options: DEFAULT_STATUS_OPTIONS.map(name => ({ name })) } },
+  { name: F.platform, type: 1 },
+  { name: F.url, type: 1 },
+  { name: F.updatedAt, type: 1 },
+  { name: F.uid, type: 1 },
+  { name: F.rawStatus, type: 1 },
+  { name: F.autoFollowUp, type: 1 }
 ];
 
 let tokenCache = { appId: '', token: '', expiresAt: 0 };
 
 hardenStorageAccess();
+migrateSettings().catch(() => {});
 chrome.runtime.onInstalled.addListener(async () => {
   await hardenStorageAccess();
   await migrateSettings();
 });
+chrome.runtime.onStartup?.addListener(() => hardenStorageAccess().catch(() => {}));
 
 async function hardenStorageAccess() {
   try {
@@ -38,16 +40,21 @@ async function hardenStorageAccess() {
       await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
     }
   } catch {}
+  await Credentials?.harden?.().catch(() => null);
 }
 
 async function migrateSettings() {
   const { settings } = await chrome.storage.local.get(['settings']);
+  const legacySecret = String(settings?.appSecret || '').trim();
+  if (legacySecret) await Credentials?.migrateLegacySecret?.(legacySecret).catch(() => null);
+  const cleanSettings = { ...(settings || {}) };
+  delete cleanSettings.appSecret;
   const merged = {
     ...DEFAULT_SETTINGS,
-    ...(settings || {}),
-    customSites: settings?.customSites || {},
-    companyAliases: settings?.companyAliases || {},
-    trustedAutoSyncHosts: Array.isArray(settings?.trustedAutoSyncHosts) ? settings.trustedAutoSyncHosts : []
+    ...cleanSettings,
+    customSites: cleanSettings.customSites || {},
+    companyAliases: cleanSettings.companyAliases || {},
+    trustedAutoSyncHosts: Array.isArray(cleanSettings.trustedAutoSyncHosts) ? cleanSettings.trustedAutoSyncHosts : []
   };
   await chrome.storage.local.set({ settings: merged });
 }
@@ -70,7 +77,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case 'RESOLVE_FEISHU_URL': {
-          const settings = msg.settings || (await getSettings());
+          const settings = await withCredential(msg.settings || (await getSettings()));
           const result = await resolveFeishuLink(settings, msg.url || settings.baseUrl || '');
           sendResponse({ ok: true, ...result });
           break;
@@ -269,7 +276,16 @@ async function resolveRenderedSiteIdentity(root, providerName = '') {
 
 async function getSettings() {
   const { settings } = await chrome.storage.local.get(['settings']);
-  return { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  const cleanSettings = { ...(settings || {}) };
+  delete cleanSettings.appSecret;
+  return { ...DEFAULT_SETTINGS, ...cleanSettings };
+}
+
+async function withCredential(input = {}) {
+  const settings = { ...DEFAULT_SETTINGS, ...(input || {}) };
+  const supplied = String(input?.appSecret || '').trim();
+  const appSecret = supplied || await Credentials?.getSecret?.().catch(() => '') || '';
+  return { ...settings, appSecret };
 }
 
 function normalizeHost(value) {
@@ -450,7 +466,7 @@ async function resolveSingleTableId(settings, appToken, suppliedToken = '') {
 }
 
 async function prepareSettings(input) {
-  let settings = { ...DEFAULT_SETTINGS, ...(input || {}) };
+  let settings = await withCredential(input || {});
   if ((!settings.appToken || !settings.tableId) && settings.baseUrl) {
     const resolved = await resolveFeishuLink(settings, settings.baseUrl);
     settings = { ...settings, appToken: resolved.appToken, tableId: resolved.tableId };
@@ -459,11 +475,13 @@ async function prepareSettings(input) {
 }
 
 async function prepareStoredSettings() {
-  let settings = await getSettings();
+  let persisted = await getSettings();
+  let settings = await withCredential(persisted);
   if ((!settings.appToken || !settings.tableId) && settings.baseUrl) {
     const resolved = await resolveFeishuLink(settings, settings.baseUrl);
+    persisted = { ...persisted, appToken: resolved.appToken, tableId: resolved.tableId };
+    await chrome.storage.local.set({ settings: persisted });
     settings = { ...settings, appToken: resolved.appToken, tableId: resolved.tableId };
-    await chrome.storage.local.set({ settings });
   }
   return settings;
 }
@@ -496,7 +514,7 @@ async function ensureFields(inputSettings) {
   const created = [];
   const warnings = [];
 
-  if (!names.has('公司')) {
+  if (!names.has(F.company)) {
     const firstPage = await listRecordsPage(settings, token, 20);
     const tableEmpty = !(firstPage.data?.items || []).length;
     const primary = fields.find(f => f.is_primary && f.type === 1);
@@ -505,10 +523,10 @@ async function ensureFields(inputSettings) {
       try {
         await feishuRequest(settings, token,
           `/bitable/v1/apps/${encodeURIComponent(settings.appToken)}/tables/${encodeURIComponent(settings.tableId)}/fields/${encodeURIComponent(primary.field_id)}`,
-          { method: 'PUT', body: { field_name: '公司', type: 1 } }
+          { method: 'PUT', body: { field_name: F.company, type: 1 } }
         );
-        created.push('公司（复用空表主字段）');
-        names.add('公司');
+        created.push(`${F.company}（复用空表主字段）`);
+        names.add(F.company);
       } catch (e) {
         warnings.push('未能复用默认主字段，已改为新建“公司”字段');
       }
@@ -558,16 +576,16 @@ async function listAllRecords(settings, token) {
 
 function recordToFields(r, now) {
   return {
-    '公司': safeCell(r.company),
-    '岗位名称': safeCell(r.position),
-    '工作地点': safeCell(r.location),
-    '投递时间': safeCell(r.applyTime),
-    '当前状态': safeCell(r.status || '已投递'),
-    '招聘平台': safeCell(r.platform),
-    '岗位链接': safeCell(r.url, 1000),
-    '最近更新时间': now,
-    '唯一记录ID': safeCell(r.uid, 200),
-    '原始状态': safeCell(r.rawStatus)
+    [F.company]: safeCell(r.company),
+    [F.position]: safeCell(r.position),
+    [F.location]: safeCell(r.location),
+    [F.applyTime]: safeCell(r.applyTime),
+    [F.status]: safeCell(r.status || '已投递'),
+    [F.platform]: safeCell(r.platform),
+    [F.url]: safeCell(r.url, 1000),
+    [F.updatedAt]: now,
+    [F.uid]: safeCell(r.uid, 200),
+    [F.rawStatus]: safeCell(r.rawStatus)
   };
 }
 
@@ -577,15 +595,15 @@ function safeCell(value, max = 500) {
 
 function comparableFromExisting(fields) {
   return {
-    company: stringValue(fields['公司']),
-    position: stringValue(fields['岗位名称']),
-    location: stringValue(fields['工作地点']),
-    applyTime: stringValue(fields['投递时间']),
-    status: stringValue(fields['当前状态']),
-    platform: stringValue(fields['招聘平台']),
-    url: stringValue(fields['岗位链接']),
-    uid: stringValue(fields['唯一记录ID']),
-    rawStatus: stringValue(fields['原始状态'])
+    company: stringValue(fields[F.company]),
+    position: stringValue(fields[F.position]),
+    location: stringValue(fields[F.location]),
+    applyTime: stringValue(fields[F.applyTime]),
+    status: stringValue(fields[F.status]),
+    platform: stringValue(fields[F.platform]),
+    url: stringValue(fields[F.url]),
+    uid: stringValue(fields[F.uid]),
+    rawStatus: stringValue(fields[F.rawStatus])
   };
 }
 
@@ -603,15 +621,6 @@ function stringValue(v) {
 
 function normalizeComparable(v) {
   return String(v || '').trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-function normalizeCompanyComparable(v) {
-  return normalizeComparable(v)
-    .replace(/^(?:(?:欢迎|诚邀)(?:您)?(?:加入|来到|关注|选择)?|加入(?:我们|本公司|公司)?|走进)\s*/i, '')
-    .replace(/[！!。.]$/g, '')
-    .replace(/(?:20\d{2}|\d{2})(?:届)?(?:应届生?)?(?:秋季|春季)?(?:校园招聘|校招|招聘)/gi, ' ')
-    .replace(/[·•|｜\-—–\s]*(?:(?:秋季|春季)?(?:校园招聘|校招官网|校招|社会招聘|社招官网|社招|应届招聘|实习招聘)|人才招聘|招聘官网|招聘平台|招聘中心|招聘网站|招聘主页|招聘)\s*$/i, '')
-    .trim();
 }
 
 function normalizePositionComparable(v) {
@@ -754,12 +763,15 @@ async function syncRecords(records, page = {}, source = 'manual') {
 
 async function trustHostForAutoSync(host) {
   const normalized = normalizeHost(host);
-  if (!normalized) return;
+  if (!normalized) return false;
+  const granted = HostAccess?.has ? await HostAccess.has(`https://${normalized}/`).catch(() => false) : true;
+  if (!granted) return false;
   const settings = await getSettings();
   const set = new Set(settings.trustedAutoSyncHosts || []);
   set.add(normalized);
   settings.trustedAutoSyncHosts = [...set].slice(-100);
   await chrome.storage.local.set({ settings });
+  return true;
 }
 
 function dedupeInput(records) {

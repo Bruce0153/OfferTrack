@@ -2,38 +2,14 @@
   'use strict';
 
   const Core = globalThis.OfferTrackFollowUpCore;
-  const Matcher = globalThis.OfferTrackApplicationMatcher;
-  const StateMachine = globalThis.OfferTrackStatusStateMachine;
   const Queue = globalThis.OfferTrackFollowUpQueue;
-  const Journal = globalThis.OfferTrackChangeJournal;
   const CookieSession = globalThis.OfferTrackCookieSession;
   const Sessions = globalThis.OfferTrackSessionManager;
   const Providers = globalThis.OfferTrackProviderRegistry;
+  const HostAccess = globalThis.OfferTrackHostAccess;
   const triggerAt = new Map();
   const LIKELY_RECRUIT_URL_RE = /(?:jobs?|career|careers|recruit|recruitment|campus|candidate|application|applications|apply|delivery|deliveries|zhiye|mokahr|feishu)/i;
 
-  function installCoreGuards() {
-    if (!Core || !Matcher || !StateMachine) return;
-
-    Core.matchScanned = function(targets, scannedRecords) {
-      const matches = Matcher.matchScanned(targets || [], scannedRecords || []);
-      for (const match of matches) {
-        if (match.scanned) Journal?.rememberMatch?.(match.target, match.scanned);
-      }
-      return matches;
-    };
-
-    Core.statusChanged = function(target, scanned) {
-      if (!scanned) return false;
-      const meta = scanned._offerTrackMatch || null;
-      const decision = StateMachine.decide(target?.status, scanned?.status, {
-        matchConfidence: meta ? Number(meta.confidence || 0) : 1,
-        rawStatus: scanned?.rawStatus || ''
-      });
-      try { scanned._offerTrackStatusDecision = decision; } catch {}
-      return !!decision.changed && !!decision.allowed;
-    };
-  }
 
   async function resolveKnownHost(inputHost) {
     const host = Queue?.normalizeHost ? Queue.normalizeHost(inputHost) : String(inputHost || '').toLowerCase().replace(/^\.+|^www\./, '');
@@ -118,11 +94,12 @@
 
   async function ensurePageBridge(tabId, url) {
     if (!isLikelyRecruitmentUrl(url) || !chrome.scripting?.executeScript) return false;
+    if (HostAccess?.has && !(await HostAccess.has(url))) return false;
     const alive = await chrome.tabs.sendMessage(tabId, { type: 'GET_PAGE_RECORDS' }).catch(() => null);
     if (alive?.ok) return true;
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['company-identity.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
+      files: ['company-identity.js', 'application-contract.js', 'semantic.js', 'content.js', 'strategy-probe.js', 'followup-probe.js'],
       world: 'ISOLATED'
     });
     if (chrome.scripting?.insertCSS) {
@@ -161,11 +138,11 @@
   function registerMessages() {
     if (!globalThis.chrome?.runtime?.onMessage) return;
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-      if (!['GET_FOLLOWUP_QUEUE_V2','CLEAR_FOLLOWUP_QUEUE_V2','GET_CHANGE_JOURNAL','CLEAR_CHANGE_JOURNAL','GET_COOKIE_SESSION_EVIDENCE'].includes(msg?.type)) return;
+      if (!['GET_FOLLOWUP_QUEUE','CLEAR_FOLLOWUP_QUEUE','GET_CHANGE_JOURNAL','CLEAR_CHANGE_JOURNAL','GET_COOKIE_SESSION_EVIDENCE'].includes(msg?.type)) return;
       (async () => {
         try {
-          if (msg.type === 'GET_FOLLOWUP_QUEUE_V2') return sendResponse({ ok: true, jobs: await Queue.read() });
-          if (msg.type === 'CLEAR_FOLLOWUP_QUEUE_V2') return sendResponse({ ok: true, jobs: await Queue.clear() });
+          if (msg.type === 'GET_FOLLOWUP_QUEUE') return sendResponse({ ok: true, jobs: await Queue.read() });
+          if (msg.type === 'CLEAR_FOLLOWUP_QUEUE') return sendResponse({ ok: true, jobs: await Queue.clear() });
           if (msg.type === 'GET_CHANGE_JOURNAL') return sendResponse({ ok: true, entries: await Journal.read() });
           if (msg.type === 'CLEAR_CHANGE_JOURNAL') { await Journal.clear(); return sendResponse({ ok: true, entries: [] }); }
           if (msg.type === 'GET_COOKIE_SESSION_EVIDENCE') {
@@ -185,21 +162,9 @@
     });
   }
 
-  installCoreGuards();
   registerMessages();
   chrome.cookies?.onChanged?.addListener(info => { handleCookieChange(info).catch(() => {}); });
   chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => { handlePageOpen(tabId, changeInfo, tab).catch(() => {}); });
   chrome.alarms?.onAlarm?.addListener(alarm => { handleQueueAlarm(alarm).catch(() => {}); });
 
-  globalThis.OfferTrackV25Orchestrator = {
-    installCoreGuards,
-    resolveKnownHost,
-    markPendingRecheck,
-    runHost,
-    handleCookieChange,
-    isLikelyRecruitmentUrl,
-    ensurePageBridge,
-    handlePageOpen,
-    handleQueueAlarm
-  };
 })();

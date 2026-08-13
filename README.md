@@ -1,6 +1,6 @@
-# OfferTrack v2.5.0
+# OfferTrack v2.6.2
 
-> v2.5.0 将自动跟进升级为 Follow-up Orchestrator：Job Queue 2.0 + Application Matching 2.0 + Status State Machine + Change Journal。目标不是增加更多网站特例，而是降低错误匹配、错误状态覆盖和长期运行资源开销。
+> v2.6.2 在保留稳定 Site Identity、Provider、Matcher、Queue/Session 的基础上完成安全与架构收口：字段契约集中、Structured State 最小化投影、显式 Follow-up Decision、按站点授权，以及更干净的飞书表格。
 
 OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge / Chromium Manifest V3 扩展。
 
@@ -9,7 +9,7 @@ OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge
 ## 核心原则
 
 - Provider 泛化优先于 Company Adapter。
-- `API GET → Structured State → Page Scan`，三级降级始终保留。
+- `Cookie 会话证据 → API GET → Structured State → Page Scan` 四级流程始终保留；Cookie 缺失不会直接判定掉线。
 - 宁可不更新，也不能错误更新。
 - 事件驱动优于轮询。
 - Cookie 只作为 Session Evidence；Cookie value 永不持久化、日志、飞书、通知或外发。
@@ -29,13 +29,17 @@ OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge
 
 ## 安装
 
-1. 解压 `OfferTrack_Edge_v2.5.0.zip`。
+1. 解压 `OfferTrack_Edge_v2.6.2.zip`。
 2. Edge 打开 `edge://extensions/`。
 3. 开启“开发人员模式”。
 4. 点击“加载解压缩的扩展”。
 5. 选择解压后的 OfferTrack 文件夹。
 
 升级旧版本时，建议覆盖原来已经加载的固定目录，然后在 `edge://extensions/` 点击“重新加载”，通常可以保留已有本地飞书配置。
+
+从 v2.6.2 起，招聘网站不再使用安装时的全 HTTPS 永久权限。首次在某个招聘站点手动同步时，OfferTrack 会请求该站点的精确 HTTPS Origin 权限；拒绝不会影响当前手动同步，但后台自动跟进会跳过该站点，直到你主动授权。
+
+App Secret 默认只保存在 `chrome.storage.session` 的浏览器会话内存中；需要浏览器重启后仍无人值守自动跟进时，可在设置页显式勾选“在本机记住 App Secret”。普通 `settings` 对象不再保存 App Secret，设置页不会回填明文，并可随时用“清除已保存密钥”同时删除会话与本机副本。
 
 ## 配置飞书
 
@@ -63,9 +67,11 @@ OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge
 
 ## 飞书字段
 
-基础字段包括：公司、岗位名称、工作地点、投递时间、当前状态、招聘平台、岗位链接、最近更新时间、下一步行动、面试时间、优先级、备注、唯一记录ID、原始状态。
+基础字段包括：公司、岗位名称、工作地点、投递时间、当前状态、招聘平台、岗位链接、最近更新时间、唯一记录ID、原始状态。
 
-自动跟进字段包括：自动跟进、最后检查时间、状态更新时间、检查状态、登录状态、最近错误、招聘系统、检查方式。
+自动跟进只额外使用：自动跟进。
+
+运行状态、登录状态、检查方式、最近错误等诊断信息保留在插件 Session / Journal / 运行摘要中，不再写进业务表。旧版本已经创建的“最后检查时间 / 状态更新时间 / 检查状态 / 登录状态 / 下一步行动 / 面试时间 / 优先级 / 备注 / 最近错误 / 招聘系统 / 检查方式”等列不会自动删除，以避免破坏历史数据。
 
 `自动跟进` 留空时默认参与检查；填写 `关闭`、`否` 或 `不跟进` 时跳过。
 
@@ -73,7 +79,7 @@ OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge
 
 自动跟进依次尝试：
 
-`API GET → Structured State → Page Scan`
+`Cookie 会话证据 → API GET → Structured State → Page Scan`
 
 ### API GET
 
@@ -125,7 +131,7 @@ OfferTrack 是一个面向秋招、校招和实习投递管理的 Microsoft Edge
 
 ## Cookie Session Evidence
 
-v2.5 可以读取与已有招聘站点相关的 Cookie，但 Cookie 不是“已登录”的真值，只用于辅助判断 Session Health。
+OfferTrack 可以读取已授权招聘站点相关的 Cookie，但 Cookie 不是“已登录”的真值，只用于辅助判断 Session Health。
 
 只保留这种摘要：
 
@@ -178,11 +184,11 @@ OfferTrack 保留 v2.2.1 后的性能红线：
 
 以下情况不会覆盖已有招聘状态：页面打不开、需要重新登录、验证码/风控、没有解析到投递记录、岗位匹配不足、匹配歧义、状态机判断为错误回退、终态证据不足。
 
-这些情况下只更新检查相关字段或等待用户处理。
+这些情况下不会为了记录诊断而写入飞书业务表；Session / Journal / 运行摘要会保留必要的非敏感诊断信息，并在需要时等待用户处理。
 
 ## 当前版本链路
 
-`Scheduler / Event → Job Queue → Provider Registry → Session Manager → Cookie Evidence → API GET → Structured State → Page Scan → Application Matching → Status State Machine → Feishu Update → Change Journal / Notification`
+`Scheduler / Event → Job Queue → Provider Registry → Session Manager → Cookie Evidence → API GET → Safe Structured State → Page Scan → Application Matcher → Follow-up Decision → Status State Machine → Feishu Update → Change Journal / Notification`
 
 ## 验证说明
 

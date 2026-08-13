@@ -5,7 +5,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function() {
   'use strict';
 
-  const STORAGE_KEY = 'followUpReviewV26';
+  const STORAGE_KEY = 'followUpReview';
+  const LEGACY_STORAGE_KEYS = Object.freeze(['followUpReviewV26']);
+  let migrationPromise = null;
   const MAX_ENTRIES = 30;
   const TTL_MS = 14 * 24 * 60 * 60 * 1000;
   const MIN_REVIEW_CONFIDENCE = 0.68;
@@ -53,8 +55,24 @@
       .slice(0, MAX_ENTRIES);
   }
 
+  async function ensureStorageMigration() {
+    if (!globalThis.chrome?.storage?.local) return;
+    if (migrationPromise) return migrationPromise;
+    migrationPromise = (async () => {
+      const keys = [STORAGE_KEY, ...LEGACY_STORAGE_KEYS];
+      const stored = await chrome.storage.local.get(keys);
+      if (!Array.isArray(stored[STORAGE_KEY])) {
+        const legacy = LEGACY_STORAGE_KEYS.map(k => stored[k]).find(Array.isArray);
+        if (legacy) await chrome.storage.local.set({ [STORAGE_KEY]: prune(legacy) });
+      }
+      await chrome.storage.local.remove(LEGACY_STORAGE_KEYS);
+    })();
+    return migrationPromise;
+  }
+
   async function read() {
     if (!globalThis.chrome?.storage?.local) return [];
+    await ensureStorageMigration();
     const stored = await chrome.storage.local.get([STORAGE_KEY]);
     const safe = prune(Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : []);
     await chrome.storage.local.set({ [STORAGE_KEY]: safe });
@@ -63,7 +81,7 @@
 
   async function write(items) {
     const safe = prune(items);
-    if (globalThis.chrome?.storage?.local) await chrome.storage.local.set({ [STORAGE_KEY]: safe });
+    if (globalThis.chrome?.storage?.local) { await ensureStorageMigration(); await chrome.storage.local.set({ [STORAGE_KEY]: safe }); }
     return safe;
   }
 
@@ -88,11 +106,6 @@
     return items;
   }
 
-  async function removeForRecord(recordId) {
-    const rid = clean(recordId, 120);
-    if (!rid) return read();
-    return write((await read()).filter(x => x.recordId !== rid));
-  }
 
   async function retainRecordIds(recordIds = []) {
     const allowed = new Set((recordIds || []).map(x => clean(x, 120)).filter(Boolean));
@@ -100,14 +113,14 @@
   }
 
   async function clear() {
-    if (globalThis.chrome?.storage?.local) await chrome.storage.local.remove([STORAGE_KEY]);
+    if (globalThis.chrome?.storage?.local) { await ensureStorageMigration(); await chrome.storage.local.remove([STORAGE_KEY, ...LEGACY_STORAGE_KEYS]); }
     return [];
   }
 
   function labelFor(reasonCode) { return REASONS[reasonCode] || '需要人工确认'; }
 
   return {
-    STORAGE_KEY, MAX_ENTRIES, TTL_MS, MIN_REVIEW_CONFIDENCE, REASONS,
-    sanitize, prune, read, write, add, get, remove, removeForRecord, retainRecordIds, clear, labelFor
+    STORAGE_KEY, LEGACY_STORAGE_KEYS, MAX_ENTRIES, TTL_MS, MIN_REVIEW_CONFIDENCE, REASONS,
+    sanitize, prune, read, write, add, get, remove, retainRecordIds, clear, labelFor
   };
 });

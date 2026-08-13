@@ -13,8 +13,10 @@
     <section class="panel">
       <h2>1. 飞书应用</h2>
       <label>App ID<input id="appId" placeholder="cli_xxxxxxxxx" /></label>
-      <label>App Secret<input id="appSecret" type="password" placeholder="仅保存在本机扩展存储中" /></label>
-      <p class="hint">建议只使用你自己的飞书企业自建应用。OfferTrack 会限制本地设置只由扩展的可信页面/后台读取；App Secret 只用于向飞书开放平台换取访问令牌。</p>
+      <label>App Secret<input id="appSecret" type="password" placeholder="默认仅本次浏览器会话保存" /></label>
+      <label class="check"><input id="rememberAppSecret" type="checkbox" /> 在本机记住 App Secret <span>（仅无人值守自动跟进需要；默认关闭）</span></label>
+      <div class="buttons"><button id="clearAppSecret" class="danger">清除已保存密钥</button></div>
+      <p class="hint">App Secret 默认保存在浏览器会话内存中，浏览器重启后需重新输入；开启“记住”后才会写入本机扩展私有存储。设置对象本身永远不包含 App Secret，也不会把密钥回填到页面、飞书表格或日志。</p>
     </section>
 
     <section class="panel">
@@ -90,6 +92,8 @@
     <div class="bottom"><button id="save" class="primary big">保存设置</button><span id="saveMsg"></span></div>
     <section class="privacy">隐私：插件不保存招聘网站账号密码、Cookie 值或验证码。Cookie API 仅在本机读取会话证据并立即摘要为数量/健康等级；不会写入飞书、日志或持久化原始 Cookie。</section>
   </main>
+  <script src="credential-store.js"></script>
+  <script src="host-access.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

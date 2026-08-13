@@ -1,3 +1,25 @@
+## v2.6.2
+
+- 最终安全收口：安装时不再申请全 HTTPS `host_permissions`，只保留飞书开放平台；招聘站点改为首次手动同步时按精确 HTTPS Origin 请求 `optional_host_permissions`，未授权站点不会后台自动访问。
+- App Secret 从普通 `settings` 中移除，默认只放在 `chrome.storage.session`；只有用户显式勾选“在本机记住”才写入独立的可信扩展本地凭据区。旧 `settings.appSecret` 更新后只迁移到当前会话并从普通设置删除。
+- 设置页不再回填 App Secret 明文，并提供显式“清除已保存密钥”；可一次清除会话与本机持久化副本。
+- 新增统一 `application-contract.js`：飞书字段名、Structured State 字段语义和安全投影策略只有一套真相源；Application Data、Semantic Parser、Content Parser、MAIN-world 投影共用该契约。
+- Structured State 收紧：script JSON 在离开页面前先做安全投影；MAIN-world Store 使用字段/路径联合白名单、敏感 key/container 黑名单和更小预算；泛化 `id/status/name/time` 只有处于招聘申请上下文时才允许保留。
+- 页面字段标签与 Structured State 字段语义进一步集中到 `application-contract.js`；Resource Timing 中发现的 API URL 在离开页面前先拒绝敏感 query，并清理 cache-buster，避免候选 URL 携带账号/签名参数进入后台。
+- Safe GET 执行层在请求前和跟随重定向后都强制 same-origin，API JSON 在进入 Application Data 前再次安全投影。
+- 删除 Follow-up 运行时 Monkey Patch；新增显式 `followup-decision.js`，Application Matcher、人工 Review、Status State Machine 和 Change Journal 通过明确调用链协作，不再覆写 `Core.matchScanned/statusChanged`。
+- Follow-up 运行诊断不再每 6 小时写入飞书。新表只维护 11 个业务字段（10 个基础字段 + `自动跟进`）；最后检查时间、登录状态、检查状态、检查方式、Provider 等留在 Session / Journal / 运行摘要。已有旧列不自动删除。
+- 删除旧 Core 重复 Matcher、Queue/Review/Cookie 未使用导出与静态 `innerHTML` UI 构建；保留仍被回归使用的只读 Semantic test hook。
+- 飞书表头瘦身：新表不再默认创建“下一步行动 / 面试时间 / 优先级 / 备注”，自动跟进也不再创建“最近错误 / 招聘系统 / 检查方式”；已有字段不自动删除。
+- 运行时模块改为职责命名：`followup-orchestrator.js`、`followup-actions.js`，版本号不再进入架构文件名或运行时 Global。
+- Queue / Review 的活动 Storage Key 与 Queue Alarm 改为无版本命名，并提供一次性旧 Key 迁移，迁移后删除旧 Key/Alarm。
+- 内部消息改为 `GET_FOLLOWUP_QUEUE` / `CLEAR_FOLLOWUP_QUEUE`，移除版本化协议名。
+- 删除确认无引用的 debug global 与 `normalizeCompanyComparable()` dead code。
+- Safe GET 执行函数内部再次强制 same-origin，避免未来调用方绕过上游筛选。
+- 第二批低风险整理：Structured State 的状态映射统一委托给 `Status State Machine`，删除 `application-data.js` 中重复的状态正则，避免两套状态语义长期漂移。
+- `followup-core.js` 集中维护飞书读取字段映射，并使用统一的 canonical status 比较状态变化；“面试中 / 待面试”等等价标签不再被误判为状态更新，未知状态也不会触发写入。
+- Service Worker 明确保证 `status-state-machine.js` 先于状态消费者加载，并新增对应依赖顺序、状态一致性与误更新回归测试。
+
 # Changelog
 
 ## v2.6.1

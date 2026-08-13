@@ -1,18 +1,15 @@
 (() => {
   'use strict';
   const CompanyIdentity = globalThis.OfferTrackCompanyIdentity;
+  const ApplicationContract = globalThis.OfferTrackApplicationContract;
 
   const COMPANY_NOISE_RE = /^(?:相关公司|关联公司|推荐公司|相似公司|其他公司|更多公司|热门公司|合作公司|公司信息|公司介绍|企业信息|企业介绍|所属公司|招聘公司|雇主信息|关于我们|招聘|校园招聘|校招|社招|应届|应届生|实习|职位|岗位|投递记录|申请记录|我的申请|我的投递|logo|icon|brand)$/i;
-  const COMPANY_KEY_RE = /^(?:company(?:name|shortname|fullname|displayname)?|company_name|company_short_name|company_full_name|corp(?:name|shortname|fullname)?|corp_name|enterprise(?:name|shortname|fullname)?|employer(?:name|shortname|fullname)?|organization(?:name|shortname|fullname)?|organisation(?:name|shortname|fullname)?|orgname|org_name|brandname|brand_name|tenantname|tenant_name|sitename|site_name|publisher)$/i;
-  const COMPANY_PARENT_RE = /(company|corp|enterprise|employer|organization|organisation|tenant|brand|site|career|recruit|hr)/i;
   const COMPANY_CONTEXT_BAD_RE = /(related|recommend|similar|other|partner|supplier|customer|competitor|affiliate|suggest|history|hot|search|list|关联|相关|推荐|相似|其他|合作|供应商|客户|竞品|搜索|列表)/i;
   const COMPANY_WORD_RE = /(有限公司|集团|科技|网络|智能|银行|证券|研究院|实验室|大学|股份|公司|汽车|机器人|控股|实业|电子|信息|通信)/;
 
   const STRONG_ROLE_RE = /(工程师|研究员|研究岗|专家|科学家|架构师|产品经理|项目经理|算法岗|研发岗|技术岗|开发岗|测试岗|运营岗|设计岗|数据岗|实习生|管培生|管理培训生|顾问|分析师|数据科学家|测试工程师|设计师|专员|主管|经理|总监|负责人|博士后|研究助理)/i;
   const TECH_RE = /(大模型|多模态|机器学习|深度学习|计算机视觉|视觉|NLP|LLM|Agent|AI|CV|算法|研发|开发|后端|前端|客户端|Infra|基础架构|平台|搜索|推荐|机器人|具身|模型|数据)/i;
   const JOB_CODE_RE = /(?:\(|（|\[|【)\s*[A-Za-z]{0,6}\d{3,}\s*(?:\)|）|\]|】)|\b[A-Za-z]{1,6}\d{4,}\b/;
-  const POSITION_KEY_RE = /^(?:position(?:name|title)?|position_name|position_title|job(?:name|title)?|job_name|job_title|post(?:name|title)?|post_name|post_title|rolename|role_name|recruitpositionname|recruit_position_name|recruitjobname|recruit_job_name|vacancyname|vacancy_name|职位名称|岗位名称|应聘职位|申请职位)$/i;
-  const POSITION_PARENT_RE = /(position|job|post|role|vacancy|recruit|application|apply|delivery)/i;
   const POSITION_NOISE_RE = /(跟进应聘进度|查询暂存投递记录|暂存投递记录|查看(?:我的)?(?:应聘|申请|投递)(?:记录|进度)?|查询(?:应聘|申请|投递)(?:记录|进度)?|管理(?:我的)?(?:申请|投递)|完善简历|修改简历|编辑简历|我的简历|职位搜索|岗位搜索|职位推荐|岗位推荐|相关职位|相关岗位|更多职位|更多岗位|投递记录|申请记录|应聘记录|候选人中心|个人中心|返回首页|招聘首页|招聘职位|社会招聘|校园招聘|实习招聘|人才项目)/i;
   const SENTENCE_HINT_RE = /(点击|查询|查看|跟进|管理|完善|修改|请|您|可在|用于|了解|获取|关注|操作|进入|跳转|暂存|记录)/;
   const STATUS_RE = /(已投递|投递成功|申请成功|筛选中|评估中|待测评|测评中|笔试中|待面试|面试中|已结束|未通过|不通过|淘汰|已录用|offer)/i;
@@ -202,15 +199,15 @@
         addCompany(value.alternateName, 'structured-organization', `${pathText}.alternateName`);
       }
       for (const [key, val] of Object.entries(value).slice(0, 220)) {
-        const normalizedKey = key.replace(/[-_\s]/g, '').toLowerCase();
         const nextPath = [...path, key];
         const nextPathText = nextPath.join('.');
         if (COMPANY_CONTEXT_BAD_RE.test(nextPathText)
           || CompanyIdentity?.isBadContext?.(nextPathText)
           || CompanyIdentity?.isPersonalContext?.(nextPathText)) continue;
         if (typeof val === 'string' || typeof val === 'number') {
-          if (COMPANY_KEY_RE.test(key) || (normalizedKey === 'name' && COMPANY_PARENT_RE.test(pathText))) addCompany(String(val), 'runtime-json', nextPathText);
-          if (POSITION_KEY_RE.test(key) || (normalizedKey === 'title' && POSITION_PARENT_RE.test(pathText)) || (normalizedKey === 'name' && POSITION_PARENT_RE.test(pathText) && !COMPANY_PARENT_RE.test(pathText))) addPosition(String(val), 'runtime-json', nextPathText);
+          const kind = ApplicationContract?.fieldKind?.(key, nextPathText) || '';
+          if (kind === 'company') addCompany(String(val), 'runtime-json', nextPathText);
+          if (kind === 'position') addPosition(String(val), 'runtime-json', nextPathText);
         } else if (val && typeof val === 'object') visit(val, nextPath, depth + 1, seen);
       }
     };
@@ -223,28 +220,32 @@
   }
 
   function collectRuntimeScripts(addCompany, addPosition) {
-    const companyKeys = '(?:company(?:Name|ShortName|FullName|DisplayName)?|company_name|company_short_name|company_full_name|corpName|corp_name|enterpriseName|employerName|organizationName|organisationName|orgName|org_name|brandName|brand_name|tenantName|tenant_name|siteName|site_name)';
-    const positionKeys = '(?:position(?:Name|Title)?|position_name|position_title|job(?:Name|Title)?|job_name|job_title|post(?:Name|Title)?|post_name|post_title|roleName|role_name|recruitPositionName|recruit_position_name|recruitJobName|recruit_job_name|vacancyName|vacancy_name)';
-    const companyRe = new RegExp(`["']?(${companyKeys})["']?\\s*[:=]\\s*["']([^"'\\n\\r]{2,120})["']`, 'gi');
-    const positionRe = new RegExp(`["']?(${positionKeys})["']?\\s*[:=]\\s*["']([^"'\\n\\r]{3,160})["']`, 'gi');
-
+    if (!ApplicationContract?.fieldKind) return;
+    // Compatibility fallback for inline JS that is not valid JSON. Match a bounded generic
+    // key/value assignment, then let the centralized application contract decide whether the
+    // key is a recruitment company/position field.
+    const assignmentRe = /["']?([A-Za-z_$][A-Za-z0-9_$-]{1,63})["']?\s*[:=]\s*["']([^"'\n\r]{2,160})["']/g;
     let budget = 0;
     for (const script of [...document.scripts].filter(s => !s.src).slice(0, 60)) {
       const raw = script.textContent || '';
       if (!raw || raw.length > 600_000) continue;
       budget += raw.length;
       if (budget > MAX_SCRIPT_CHARS) break;
+      assignmentRe.lastIndex = 0;
       let m, hit = 0;
-      companyRe.lastIndex = 0;
-      while ((m = companyRe.exec(raw)) && hit++ < 40) {
-        const around = raw.slice(Math.max(0, m.index - 180), Math.min(raw.length, companyRe.lastIndex + 100));
-        if (!COMPANY_CONTEXT_BAD_RE.test(around)
-          && !CompanyIdentity?.isBadContext?.(around)
-          && !CompanyIdentity?.isPersonalContext?.(around)) addCompany(unescapeJsString(m[2]), 'runtime-regex', m[1]);
+      while ((m = assignmentRe.exec(raw)) && hit++ < 100) {
+        const key = m[1];
+        const kind = ApplicationContract.fieldKind(key, key);
+        if (kind !== 'company' && kind !== 'position') continue;
+        const around = raw.slice(Math.max(0, m.index - 180), Math.min(raw.length, assignmentRe.lastIndex + 100));
+        if (kind === 'company') {
+          if (!COMPANY_CONTEXT_BAD_RE.test(around)
+            && !CompanyIdentity?.isBadContext?.(around)
+            && !CompanyIdentity?.isPersonalContext?.(around)) addCompany(unescapeJsString(m[2]), 'runtime-regex', key);
+        } else {
+          addPosition(unescapeJsString(m[2]), 'runtime-regex', key);
+        }
       }
-      hit = 0;
-      positionRe.lastIndex = 0;
-      while ((m = positionRe.exec(raw)) && hit++ < 60) addPosition(unescapeJsString(m[2]), 'runtime-regex', m[1]);
     }
   }
 
@@ -610,7 +611,7 @@
     }
   });
 
-  // v2.2.1: semantic extraction is strictly on-demand.
+  // Semantic extraction is strictly on-demand.
   globalThis.__offerTrackEnhanceRecords = enhanceRecords;
   globalThis.__offerTrackSemanticSnapshot = () => collectSemanticSnapshot(false);
   globalThis.__offerTrackInvalidateSemanticCache = () => { cache = null; cacheAt = 0; cacheHref = ''; };

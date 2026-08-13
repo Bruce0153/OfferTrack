@@ -5,13 +5,16 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function() {
   'use strict';
 
-  const STORAGE_KEY = 'followUpJobQueueV2';
-  const QUEUE_ALARM = 'offertrack-follow-up-queue-v2';
+  const STORAGE_KEY = 'followUpJobQueue';
+  const LEGACY_STORAGE_KEYS = Object.freeze(['followUpJobQueueV2']);
+  const QUEUE_ALARM = 'offertrack-follow-up-queue';
+  const LEGACY_QUEUE_ALARMS = Object.freeze(['offertrack-follow-up-queue-v2']);
   const MAX_JOBS = 120;
   const MAX_RETRIES = 4;
   const PRIORITY = Object.freeze({ manual: 100, cookie_change: 90, page_open: 70, alarm: 50, retry: 40, unknown: 30 });
   let activeJob = null;
   let memory = [];
+  let migrationPromise = null;
 
   const clean = (v, max = 180) => String(v || '').replace(/[\t\r\n\u00a0]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, max);
   const normalizeHost = host => clean(host, 180).toLowerCase().replace(/^\.+|^www\./, '');
@@ -84,7 +87,27 @@
     });
   }
 
+
+  async function ensureStorageMigration() {
+    if (!globalThis.chrome?.storage?.local) return;
+    if (migrationPromise) return migrationPromise;
+    migrationPromise = (async () => {
+      const keys = [STORAGE_KEY, ...LEGACY_STORAGE_KEYS];
+      const stored = await chrome.storage.local.get(keys);
+      if (!Array.isArray(stored[STORAGE_KEY])) {
+        const legacy = LEGACY_STORAGE_KEYS.map(k => stored[k]).find(Array.isArray);
+        if (legacy) await chrome.storage.local.set({ [STORAGE_KEY]: sortJobs(legacy).slice(0, MAX_JOBS) });
+      }
+      await chrome.storage.local.remove(LEGACY_STORAGE_KEYS);
+      if (globalThis.chrome?.alarms) {
+        for (const name of LEGACY_QUEUE_ALARMS) await chrome.alarms.clear(name).catch(() => false);
+      }
+    })();
+    return migrationPromise;
+  }
+
   async function scheduleNext(jobs = memory) {
+    await ensureStorageMigration();
     if (!globalThis.chrome?.alarms) return;
     const future = jobs.filter(j => j.nextRunAt > Date.now()).sort((a,b) => a.nextRunAt - b.nextRunAt)[0];
     if (!future) {
@@ -96,6 +119,7 @@
 
   async function read() {
     if (!globalThis.chrome?.storage?.local) return memory.slice();
+    await ensureStorageMigration();
     const stored = await chrome.storage.local.get([STORAGE_KEY]);
     const jobs = Array.isArray(stored[STORAGE_KEY]) ? stored[STORAGE_KEY] : [];
     memory = sortJobs(jobs).slice(0, MAX_JOBS);
@@ -103,6 +127,7 @@
   }
 
   async function write(jobs) {
+    await ensureStorageMigration();
     memory = sortJobs(jobs).slice(0, MAX_JOBS);
     if (globalThis.chrome?.storage?.local) await chrome.storage.local.set({ [STORAGE_KEY]: memory });
     await scheduleNext(memory);
@@ -120,16 +145,8 @@
     return normalizeJob(stored);
   }
 
-  async function knownHost(host) {
-    const key = normalizeHost(host);
-    if (!key) return false;
-    const jobs = await read();
-    return jobs.some(x => x.host === key);
-  }
 
   function setActiveJob(job) { activeJob = job ? normalizeJob(job) : null; return activeJob; }
-  function getActiveJob() { return activeJob; }
-  function clearActiveJob() { activeJob = null; }
 
   function selectGroups(groups = [], cfg = {}, source = 'alarm') {
     const limit = Math.min(30, Math.max(1, Number(cfg.followUpMaxSitesPerRun || 12)));
@@ -201,9 +218,9 @@
   async function clear() { return write([]); }
 
   return {
-    STORAGE_KEY, QUEUE_ALARM, MAX_JOBS, MAX_RETRIES, PRIORITY,
+    STORAGE_KEY, LEGACY_STORAGE_KEYS, QUEUE_ALARM, LEGACY_QUEUE_ALARMS, MAX_JOBS, MAX_RETRIES, PRIORITY,
     normalizeHost, reasonKey, priorityFor, backoffMs, normalizeJob, mergeJobs, sortJobs,
-    scheduleNext, read, write, enqueue, knownHost, setActiveJob, getActiveJob, clearActiveJob,
+    scheduleNext, read, write, enqueue,
     selectGroups, markRunning, shouldRetry, completeGroup, nextReady, withActiveJob, clear
   };
 });

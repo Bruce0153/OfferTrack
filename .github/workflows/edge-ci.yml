@@ -1,0 +1,126 @@
+name: OfferTrack CI
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+      - v2
+  pull_request:
+    branches:
+      - v2
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read version
+        run: |
+          VERSION="$(node -p "require('./manifest.json').version")"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Syntax and manifest
+        run: |
+          set -euo pipefail
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+          node - <<'NODE'
+          const m=require('./manifest.json');
+          if(m.manifest_version!==3) throw new Error('MV3 required');
+          if(!/^\d+\.\d+\.\d+$/.test(m.version)||m.version_name!==m.version) throw new Error('invalid version metadata');
+          for(const p of ['storage','activeTab','alarms','notifications','scripting','cookies']) if(!(m.permissions||[]).includes(p)) throw new Error(`permission missing: ${p}`);
+          if(JSON.stringify(m.host_permissions||[])!==JSON.stringify(['https://open.feishu.cn/*'])) throw new Error('required host permissions must be Feishu-only');
+          if(!(m.optional_host_permissions||[]).includes('https://*/*')) throw new Error('optional recruitment host permission missing');
+          if((m.content_scripts||[]).some(x=>(x.matches||[]).includes('https://*/*'))) throw new Error('global https content script forbidden');
+          NODE
+      - name: Full regression suite
+        run: |
+          set -euo pipefail
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+      - name: Performance privacy and architecture guards
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const read=f=>fs.readFileSync(f,'utf8');
+          const prodFiles=fs.readdirSync('.').filter(x=>x.endsWith('.js'));
+          const prod=prodFiles.map(read).join('\n');
+          if(prodFiles.some(x=>/^v\d/i.test(x))) throw new Error('versioned runtime filename forbidden');
+          if(/setInterval\s*\(/.test(prod)) throw new Error('setInterval forbidden');
+          if(/characterData\s*:\s*true/.test(prod)) throw new Error('characterData:true forbidden');
+          if(/eval\s*\(|new Function\s*\(|document\.write\s*\(/.test(prod)) throw new Error('dynamic code forbidden');
+          if(/Core\.(?:matchScanned|statusChanged)\s*=/.test(prod)) throw new Error('runtime monkey patch forbidden');
+
+          const worker=read('service-worker.js');
+          for(const f of ['application-contract.js','credential-store.js','host-access.js','followup-decision.js']) if(!worker.includes(`'${f}'`)) throw new Error(`${f} runtime missing`);
+          const contract=read('application-contract.js');
+          if(!contract.includes('FEISHU_FIELDS')||!contract.includes('DOM_LABELS')||!contract.includes('URL_PATTERNS')||!contract.includes('projectStructured')) throw new Error('central application contract incomplete');
+          if(!contract.includes('SENSITIVE_KEY_RE')||!contract.includes('SENSITIVE_CONTAINER_RE')) throw new Error('structured sensitive filters missing');
+
+          const content=read('content.js');
+          if(!/AUTO_SCAN_MIN_GAP\s*=\s*4000/.test(content)||!content.includes('scanPromise')) throw new Error('scan guards missing');
+          if(!content.includes('reconcileSiteIdentity')||!content.includes('RESOLVE_SITE_IDENTITY')) throw new Error('site identity reconciliation missing');
+          if(!content.includes('DOM_LABELS.position')||!content.includes('DOM_LABELS.status')) throw new Error('DOM labels must use central contract');
+          const bg=read('background.js');
+          if(!bg.includes('resolveRenderedSiteIdentity')||!bg.includes('SITE_IDENTITY_CACHE_TTL')) throw new Error('site identity resolver missing');
+          if(!bg.includes('Credentials?.getSecret')||!bg.includes('delete cleanSettings.appSecret')) throw new Error('credential separation missing');
+
+          const followup=read('followup-background.js');
+          if(!followup.includes('projectionPolicy()')||!followup.includes('nodes++ >= 650')) throw new Error('safe MAIN-world projection missing');
+          if(followup.includes('chrome.tabs.query({})')||followup.includes("chrome.tabs.query({ url: ['https://*/*'] })")) throw new Error('broad tab query forbidden');
+          if(!followup.includes('apiSessionLikely')) throw new Error('cookie/API gate missing');
+          if(!followup.includes('Strategy?.sameOrigin?.(url, pageUrl)')) throw new Error('Safe GET request same-origin invariant missing');
+          if(!followup.includes('blocked_cross_origin_redirect')) throw new Error('Safe GET redirect invariant missing');
+          if(!followup.includes('Contract?.projectStructured?.(parsed')) throw new Error('API JSON projection missing');
+          if(!followup.includes("status: 'permission_required'")) throw new Error('per-origin permission gate missing');
+
+          const probe=read('strategy-probe.js');
+          if(!probe.includes('Contract.projectStructured')||!probe.includes('safeResourceUrl')) throw new Error('safe strategy probe missing');
+          const strategy=read('followup-strategy.js');
+          if(!strategy.includes('Contract.URL_PATTERNS')) throw new Error('URL policy must use central contract');
+          const orchestrator=read('followup-orchestrator.js');
+          if(!orchestrator.includes('HostAccess.has(url)')) throw new Error('persistent host authorization gate missing');
+          const decision=read('followup-decision.js');
+          if(!decision.includes('ApplicationMatcher')||!decision.includes('StateMachine')) throw new Error('explicit follow-up decision service missing');
+
+          const credentials=read('credential-store.js');
+          if(!credentials.includes("const SESSION_KEY = 'feishuCredential'")||!credentials.includes('TRUSTED_CONTEXTS')) throw new Error('credential store hardening missing');
+          const optionsJs=read('options.js');
+          if(/appSecret\s*:/.test(optionsJs.match(/function collect\(\)[\s\S]*?\n}\n/)?.[0]||'')) throw new Error('App Secret must not enter settings object');
+          if(!optionsJs.includes('clearAppSecret')) throw new Error('explicit secret clear missing');
+
+          const cookie=read('cookie-session.js');
+          if(/storage\.local\.set/.test(cookie)||/console\.(?:log|info|debug|warn|error)/.test(cookie)) throw new Error('cookie evidence must not persist/log');
+          const options=read('options.html');
+          if(!options.includes('Cookie 会话证据 → 安全 GET API → Structured State → Page Scan')) throw new Error('four-level pipeline explanation missing');
+          if(/id="followUp(?:CookiePreflight|ApiFirst|StructuredState)"/.test(options)) throw new Error('low-level follow-up switches must stay hidden');
+
+          const diagnosticFields=['最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式','下一步行动','面试时间','优先级','备注'];
+          for(const field of diagnosticFields) if([bg,followup,read('followup-actions.js')].join('\n').includes(`'${field}'`)) throw new Error(`diagnostic Feishu field must not be maintained: ${field}`);
+          const contractApi=require('./application-contract.js');
+          if(Object.keys(contractApi.FEISHU_FIELDS).length!==11) throw new Error('Feishu field budget must remain 11');
+          const review=require('./followup-review.js');
+          if(review.MAX_ENTRIES>30||review.TTL_MS>14*24*60*60*1000) throw new Error('review storage budget too large');
+          const queue=require('./followup-queue.js');
+          if(queue.MAX_RETRIES>4) throw new Error('retry budget too high');
+          console.log('OfferTrack safety and architecture guards: PASS');
+          NODE
+      - name: Build Edge ZIP
+        run: |
+          set -euo pipefail
+          ZIP="OfferTrack_Edge_v${VERSION}.zip"
+          rm -f "$ZIP"
+          zip -r "$ZIP" . -x '.git/*' '.github/*' 'tests/*' '*.zip'
+          unzip -t "$ZIP" >/dev/null
+          test "$(unzip -p "$ZIP" manifest.json | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>process.stdout.write(JSON.parse(s).version))")" = "$VERSION"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfferTrack-${{ env.VERSION }}
+          path: ${{ env.ZIP }}
+          retention-days: 30

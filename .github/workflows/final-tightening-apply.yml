@@ -16,309 +16,141 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Apply exact final delta if needed
+      - name: Apply missing final tightening only
         run: |
-          cat > /tmp/final.patch <<'PATCH'
-          --- a/application-contract.js
-          +++ b/application-contract.js
-          @@ -19,6 +19,20 @@
-               autoFollowUp: '自动跟进'
-             });
-           
-          +
-          +  const DOM_LABELS = Object.freeze({
-          +    position: Object.freeze(['岗位名称','职位名称','应聘职位','申请职位','岗位','职位']),
-          +    location: Object.freeze(['工作地点','工作地','意向地点','意向城市','地点','城市']),
-          +    applyTime: Object.freeze(['投递时间','申请时间','应聘时间','提交时间']),
-          +    status: Object.freeze(['当前状态','投递状态','申请状态','应聘状态','状态','进度']),
-          +    company: Object.freeze(['公司','企业','雇主'])
-          +  });
-          +
-          +  const URL_PATTERNS = Object.freeze({
-          +    sensitiveQuery: /(token|auth|authorization|sign|signature|nonce|timestamp|session|cookie|secret|ticket|share|code|key|credential|candidateid|userid|user_id|openid|unionid|mobile|phone|email)/i,
-          +    cacheBuster: /^(?:_|t|ts|timestamp|rnd|random|cacheBust|cb)$/i
-          +  });
-          +
-             const STRUCTURED_PATTERNS = Object.freeze({
-               positionKey: /^(?:(?:position|job|post|vacancy|role|recruitPosition|recruitJob)[A-Za-z0-9_-]*(?:name|title)|positionName|positionTitle|jobName|jobTitle|postName|postTitle|roleName|vacancyName|职位名称|岗位名称|应聘职位|申请职位)$/i,
-               positionContainerKey: /^(?:position|job|post|vacancy|role)$/i,
-          @@ -138,6 +152,8 @@
-           
-             return {
-               FEISHU_FIELDS,
-          +    DOM_LABELS,
-          +    URL_PATTERNS,
-               STRUCTURED_PATTERNS,
-               SENSITIVE_KEY_RE,
-               SENSITIVE_CONTAINER_RE,
-          --- a/content.js
-          +++ b/content.js
-          @@ -1,6 +1,8 @@
-           (() => {
-             const CompanyIdentity = globalThis.OfferTrackCompanyIdentity;
-             const ApplicationContract = globalThis.OfferTrackApplicationContract;
-          +  const DOM_LABELS = ApplicationContract?.DOM_LABELS;
-          +  if (!DOM_LABELS) throw new Error('OfferTrack application contract is required');
-             const APP_PAGE_RE = /(我的投递|投递记录|应聘记录|申请记录|我的申请|应聘进度|求职进度|招聘进度|候选人中心|网申投递|申请进度)/i;
-             const APP_URL_RE = /(mydeliver|mydelivery|myapply|my-apply|application|applications|applyrecord|delivery|deliveries|candidate.*(?:apply|deliver)|process|progress|applicationcenter|jobapply)/i;
-             const APP_ROUTE_RE = /\/(?:account|personal|candidate|user|profile)\/(?:apply|application|applications|delivery|deliveries|record|records)(?:[/?#]|$)/i;
-          @@ -36,11 +38,12 @@
-             const POSITION_NOISE_RE = /(?:第\s*\d+\s*志愿|第[一二三四五六七八九十]+志愿|官网投递|网申投递|校园投递|社会招聘|校招投递|社招投递|投递渠道|申请渠道)/ig;
-             const ANNOUNCEMENT_RE = /(请您|请关注|及时完成|以.*为准|温馨提示|特别提醒|流程升级|面试流程|固定环节|实际邀约|关注邮件|邮件通知|短信通知|设置为|情况为准|公告|通知：|提示：)/i;
-             const FIELD_LABELS = [
-          -    '岗位名称','职位名称','应聘职位','申请职位','岗位','职位',
-          -    '工作地点','工作地','意向地点','意向城市','地点','城市',
-          -    '投递时间','申请时间','应聘时间','提交时间',
-          -    '当前状态','投递状态','申请状态','应聘状态','状态','进度',
-          -    '公司','企业','雇主','招聘类型','项目'
-          +    ...DOM_LABELS.position,
-          +    ...DOM_LABELS.location,
-          +    ...DOM_LABELS.applyTime,
-          +    ...DOM_LABELS.status,
-          +    ...DOM_LABELS.company,
-          +    '招聘类型','项目'
-             ];
-           
-             let lastRecords = [];
-          @@ -487,15 +490,15 @@
-               const units = collectTextUnits(node);
-           
-               const positionMeta = inferPosition(node, units);
-          -    const positionLabeled = labeledValue(node, units, ['岗位名称','职位名称','应聘职位','申请职位','岗位','职位'], 'position');
-          +    const positionLabeled = labeledValue(node, units, DOM_LABELS.position, 'position');
-               let position = positionLabeled || positionMeta.value;
-               const positionScore = positionLabeled ? Math.max(positionMeta.score, 11) : positionMeta.score;
-           
-          -    const company = pageCompany || labeledValue(node, units, ['公司','企业','雇主'], 'company') || inferCompany(units);
-          -    const locationText = labeledValue(node, units, ['工作地点','工作地','意向地点','意向城市','地点','城市'], 'location') || inferLocation(units, raw);
-          +    const company = pageCompany || labeledValue(node, units, DOM_LABELS.company, 'company') || inferCompany(units);
-          +    const locationText = labeledValue(node, units, DOM_LABELS.location, 'location') || inferLocation(units, raw);
-               position = cleanPositionAgainstLocation(position, locationText);
-          -    const applyTime = labeledValue(node, units, ['投递时间','申请时间','应聘时间','提交时间'], 'date') || inferDate(units, raw);
-          -    const rawStatus = labeledValue(node, units, ['当前状态','投递状态','申请状态','应聘状态','状态','进度'], 'status') || inferStatus(node, units);
-          +    const applyTime = labeledValue(node, units, DOM_LABELS.applyTime, 'date') || inferDate(units, raw);
-          +    const rawStatus = labeledValue(node, units, DOM_LABELS.status, 'status') || inferStatus(node, units);
-               const link = bestLink(node, positionMeta.el, position);
-               const sourceId = extractApplicationId(node, link);
-               const cardScore = recordContainerScore(node);
-          --- a/followup-strategy.js
-          +++ b/followup-strategy.js
-          @@ -1,16 +1,19 @@
-           (function(root, factory) {
-             const matcher = root?.OfferTrackApplicationMatcher
-               || (typeof module !== 'undefined' && module.exports ? require('./application-matcher.js') : null);
-          -  const api = factory(matcher);
-          +  const contract = root?.OfferTrackApplicationContract
-          +    || (typeof module !== 'undefined' && module.exports ? require('./application-contract.js') : null);
-          +  const api = factory(matcher, contract);
-             if (typeof module !== 'undefined' && module.exports) module.exports = api;
-             if (root) root.OfferTrackFollowUpStrategy = api;
-          -})(typeof globalThis !== 'undefined' ? globalThis : this, function(Matcher) {
-          +})(typeof globalThis !== 'undefined' ? globalThis : this, function(Matcher, Contract) {
-             'use strict';
-           
-          +  if (!Contract?.URL_PATTERNS) throw new Error('OfferTrack application contract is required');
-             const POSITIVE_API_RE = /(application|apply|delivery|candidate|resume|process|progress|job.*apply|position.*apply|my.*apply|my.*deliver)/i;
-             const NEGATIVE_API_RE = /(logout|signout|delete|remove|withdraw|cancel|submit|create|update|modify|save|upload|download|track|analytics|collect|report|log|metric|beacon|captcha|verify|sms|email|sendcode|send-code)/i;
-          -  const SENSITIVE_QUERY_RE = /(token|auth|authorization|sign|signature|nonce|timestamp|session|cookie|secret|ticket|share|code|key|credential|candidateid|userid|user_id|openid|unionid|mobile|phone|email)/i;
-          -  const CACHE_BUSTER_RE = /^(?:_|t|ts|timestamp|rnd|random|cacheBust|cb)$/i;
-          +  const SENSITIVE_QUERY_RE = Contract.URL_PATTERNS.sensitiveQuery;
-          +  const CACHE_BUSTER_RE = Contract.URL_PATTERNS.cacheBuster;
-           
-             function safeUrl(input, base='') {
-               try { return new URL(String(input || ''), base || undefined); }
-          --- a/strategy-probe.js
-          +++ b/strategy-probe.js
-          @@ -3,6 +3,7 @@
-             if (globalThis.__offerTrackStrategyProbeInstalled) return;
-             globalThis.__offerTrackStrategyProbeInstalled = true;
-             const Contract = globalThis.OfferTrackApplicationContract;
-          +  const URL_POLICY = Contract?.URL_PATTERNS;
-           
-             const API_HINT_RE = /(application|apply|delivery|candidate|resume|process|progress|job.*apply|position.*apply|my.*apply|my.*deliver)/i;
-             const API_BAD_RE = /(logout|signout|delete|remove|withdraw|cancel|submit|create|update|modify|save|upload|track|analytics|collect|report|metric|beacon|captcha|verify|sms|sendcode)/i;
-          @@ -30,6 +31,19 @@
-               return out.slice(0,12);
-             }
-           
-          +  function safeResourceUrl(value) {
-          +    if (!URL_POLICY) return '';
-          +    let u;
-          +    try { u = new URL(String(value || ''), location.href); } catch { return ''; }
-          +    if (u.protocol !== 'https:' || u.origin !== location.origin) return '';
-          +    for (const [key, val] of [...u.searchParams.entries()]) {
-          +      if (URL_POLICY.sensitiveQuery.test(key) || URL_POLICY.sensitiveQuery.test(val) || String(val).length > 96) return '';
-          +      if (URL_POLICY.cacheBuster.test(key)) u.searchParams.delete(key);
-          +    }
-          +    u.hash = '';
-          +    return u.toString();
-          +  }
-          +
-             function collectResources() {
-               const out=[];
-               const seen=new Set();
-          @@ -38,13 +52,13 @@
-               for (const e of entries.slice(-320)) {
-                 const raw=String(e?.name||'');
-                 if (!raw || seen.has(raw)) continue;
-          -      let u;
-          -      try { u=new URL(raw,location.href); } catch { continue; }
-          -      if (u.protocol!=='https:' || u.origin!==location.origin) continue;
-          +      const safeUrl = safeResourceUrl(raw);
-          +      if (!safeUrl) continue;
-          +      const u = new URL(safeUrl);
-                 const key=`${u.pathname}${u.search}`;
-                 if (!API_HINT_RE.test(key) || API_BAD_RE.test(key)) continue;
-                 seen.add(raw);
-          -      out.push({ url:u.toString(), initiatorType:String(e?.initiatorType||''), duration:Number(e?.duration||0) });
-          +      out.push({ url:safeUrl, initiatorType:String(e?.initiatorType||''), duration:Number(e?.duration||0) });
-                 if (out.length>=30) break;
-               }
-               return out;
-          --- a/popup.js
-          +++ b/popup.js
-          @@ -115,13 +115,10 @@
-             $('sync').textContent = '同步中…';
-             setMessage('正在去重并同步到飞书…');
-             try {
-          -    const tab = await activeTab();
-          -    let persistentHostAccess = false;
-          -    if (tab?.url && /^https:/i.test(tab.url)) {
-          -      persistentHostAccess = await HostAccess?.request?.(tab.url).catch(() => false) || false;
-          -    }
-          +    const permissionUrl = /^https:/i.test(String(currentPage?.url || '')) ? currentPage.url : '';
-          +    if (permissionUrl) await HostAccess?.request?.(permissionUrl).catch(() => false);
-               const res = await chrome.runtime.sendMessage({
-          -      type: 'SYNC_RECORDS', records: currentRecords, page: { ...currentPage, persistentHostAccess }, source: 'manual'
-          +      type: 'SYNC_RECORDS', records: currentRecords, page: currentPage, source: 'manual'
-               });
-               if (!res?.ok) throw new Error(res?.error || '同步失败');
-               $('created').textContent = res.created ?? 0;
-          --- a/popup.html
-          +++ b/popup.html
-          @@ -21,7 +21,6 @@
-               <section class="followup-card">
-                 <div><strong>自动跟进</strong><span id="followUpState">读取中…</span></div>
-                 <small id="followUpMeta">默认每 6 小时检查一次进行中的投递</small>
-          -      <small id="sessionMeta" class="session-meta">会话状态读取中…</small>
-                 <div class="followup-buttons"><button id="followUpNow">立即跟进</button><button id="followUpActions" class="warn" hidden>0 项需处理</button></div>
-               </section>
-               <button id="sync" class="primary">同步到飞书</button>
-          --- a/options.js
-          +++ b/options.js
-          @@ -16,6 +16,7 @@
-             settings = stored.settings || { customSites: {}, companyAliases: {}, trustedAutoSyncHosts: [] };
-             await fill();
-             $('save').onclick = save;
-          +  $('clearAppSecret').onclick = clearAppSecret;
-             $('parseUrl').onclick = parseUrl;
-             $('test').onclick = testConnection;
-             $('initFields').onclick = initFields;
-          @@ -94,6 +95,14 @@
-           }
-           
-           
-          +async function clearAppSecret() {
-          +  await Credentials?.clear?.();
-          +  $('appSecret').value = '';
-          +  $('rememberAppSecret').checked = false;
-          +  $('appSecret').placeholder = '默认仅本次浏览器会话保存';
-          +  setStatus('✓ App Secret 已从浏览器会话和本机持久化存储中清除');
-          +}
-          +
-           async function parseUrl() {
-             await save();
-             const raw = $('baseUrl').value.trim();
-          --- a/options.html
-          +++ b/options.html
-          @@ -15,7 +15,8 @@
-                 <label>App ID<input id="appId" placeholder="cli_xxxxxxxxx" /></label>
-                 <label>App Secret<input id="appSecret" type="password" placeholder="默认仅本次浏览器会话保存" /></label>
-                 <label class="check"><input id="rememberAppSecret" type="checkbox" /> 在本机记住 App Secret <span>（仅无人值守自动跟进需要；默认关闭）</span></label>
-          -      <p class="hint">App Secret 默认保存在浏览器会话内存中，浏览器重启后需重新输入；开启“记住”后才会写入本机扩展私有存储。无论哪种方式都不会发送到招聘网站、飞书表格或日志。</p>
-          +      <div class="buttons"><button id="clearAppSecret" class="danger">清除已保存密钥</button></div>
-          +      <p class="hint">App Secret 默认保存在浏览器会话内存中，浏览器重启后需重新输入；开启“记住”后才会写入本机扩展私有存储。设置对象本身永远不包含 App Secret，也不会把密钥回填到页面、飞书表格或日志。</p>
-               </section>
-           
-               <section class="panel">
-          --- a/README.md
-          +++ b/README.md
-          @@ -39,7 +39,7 @@
-           
-           从 v2.6.2 起，招聘网站不再使用安装时的全 HTTPS 永久权限。首次在某个招聘站点手动同步时，OfferTrack 会请求该站点的精确 HTTPS Origin 权限；拒绝不会影响当前手动同步，但后台自动跟进会跳过该站点，直到你主动授权。
-           
-          -App Secret 默认只保存在 `chrome.storage.session` 的浏览器会话内存中；需要浏览器重启后仍无人值守自动跟进时，可在设置页显式勾选“在本机记住 App Secret”。普通 `settings` 对象不再保存 App Secret。
-          +App Secret 默认只保存在 `chrome.storage.session` 的浏览器会话内存中；需要浏览器重启后仍无人值守自动跟进时，可在设置页显式勾选“在本机记住 App Secret”。普通 `settings` 对象不再保存 App Secret，设置页不会回填明文，并可随时用“清除已保存密钥”同时删除会话与本机副本。
-           
-           ## 配置飞书
-           
-          @@ -184,7 +184,7 @@
-           
-           以下情况不会覆盖已有招聘状态：页面打不开、需要重新登录、验证码/风控、没有解析到投递记录、岗位匹配不足、匹配歧义、状态机判断为错误回退、终态证据不足。
-           
-          -这些情况下只更新检查相关字段或等待用户处理.
-          +这些情况下不会为了记录诊断而写入飞书业务表；Session / Journal / 运行摘要会保留必要的非敏感诊断信息，并在需要时等待用户处理。
-           
-           ## 当前版本链路
-           
-          --- a/QUICK_START.txt
-          +++ b/QUICK_START.txt
-          @@ -23,7 +23,7 @@
-           5. 权限修改后如提示待发布，请发布新的飞书应用版本。
-           6. 在目标多维表格右上角菜单选择“添加文档应用”，添加 OfferTrack 并给编辑权限。
-           7. 在插件设置中粘贴多维表格链接，依次点击：从链接解析 → 测试连接 → 初始化表头 → 保存设置。
-          -8. App Secret 默认仅保留在当前浏览器会话；需要浏览器重启后仍自动跟进时，再勾选“在本机记住 App Secret”。
-          +8. App Secret 默认仅保留在当前浏览器会话；需要浏览器重启后仍自动跟进时，再勾选“在本机记住 App Secret”。设置页不会回填明文，需要时可直接点击“清除已保存密钥”。
-           9. 第一次在某招聘站点手动同步时，允许该站点的精确 HTTPS Origin 权限，后台自动跟进才会长期访问该站点。
-           
-           三、日常同步
-          --- a/CHANGELOG.md
-          +++ b/CHANGELOG.md
-          @@ -2,8 +2,10 @@
-           
-           - 最终安全收口：安装时不再申请全 HTTPS `host_permissions`，只保留飞书开放平台；招聘站点改为首次手动同步时按精确 HTTPS Origin 请求 `optional_host_permissions`，未授权站点不会后台自动访问。
-           - App Secret 从普通 `settings` 中移除，默认只放在 `chrome.storage.session`；只有用户显式勾选“在本机记住”才写入独立的可信扩展本地凭据区。旧 `settings.appSecret` 更新后只迁移到当前会话并从普通设置删除。
-          +- 设置页不再回填 App Secret 明文，并提供显式“清除已保存密钥”；可一次清除会话与本机持久化副本。
-           - 新增统一 `application-contract.js`：飞书字段名、Structured State 字段语义和安全投影策略只有一套真相源；Application Data、Semantic Parser、Content Parser、MAIN-world 投影共用该契约。
-           - Structured State 收紧：script JSON 在离开页面前先做安全投影；MAIN-world Store 使用字段/路径联合白名单、敏感 key/container 黑名单和更小预算；泛化 `id/status/name/time` 只有处于招聘申请上下文时才允许保留。
-          +- 页面字段标签与 Structured State 字段语义进一步集中到 `application-contract.js`；Resource Timing 中发现的 API URL 在离开页面前先拒绝敏感 query，并清理 cache-buster，避免候选 URL 携带账号/签名参数进入后台。
-           - Safe GET 执行层在请求前和跟随重定向后都强制 same-origin，API JSON 在进入 Application Data 前再次安全投影。
-           - 删除 Follow-up 运行时 Monkey Patch；新增显式 `followup-decision.js`，Application Matcher、人工 Review、Status State Machine 和 Change Journal 通过明确调用链协作，不再覆写 `Core.matchScanned/statusChanged`。
-           - Follow-up 运行诊断不再每 6 小时写入飞书。新表只维护 11 个业务字段（10 个基础字段 + `自动跟进`）；最后检查时间、登录状态、检查状态、检查方式、Provider 等留在 Session / Journal / 运行摘要。已有旧列不自动删除。
-          --- a/tests/application-contract.test.js
-          +++ b/tests/application-contract.test.js
-          @@ -41,4 +41,9 @@
-           assert.strictEqual(records[0].status, '面试中');
-           assert.strictEqual(records[0].sourceId, 'a-1');
-           
-          +assert(Array.isArray(Contract.DOM_LABELS.position) && Contract.DOM_LABELS.position.includes('岗位名称'));
-          +assert(Contract.URL_PATTERNS.sensitiveQuery.test('candidateId'));
-          +assert.strictEqual(Contract.fieldKind('id', 'root.user.profile.id'), '', 'generic personal id must be rejected');
-          +assert.strictEqual(Contract.fieldKind('id', 'root.applications[0].id'), 'id', 'generic application id should remain available');
-          +
-           console.log('application contract + safe structured projection: PASS');
-          --- a/tests/final-hardening.test.js
-          +++ b/tests/final-hardening.test.js
-          @@ -27,4 +27,11 @@
-           assert(read('credential-store.js').includes("const SESSION_KEY = 'feishuCredential'"));
-           assert(!/setInterval\s*\(/.test([...fs.readdirSync('.').filter(x=>x.endsWith('.js'))].map(read).join('\n')));
-           
-          +const popupHtml = read('popup.html');
-          +const popup = read('popup.js');
-          +assert(!popupHtml.includes('sessionMeta'), 'dead popup session placeholder must be removed');
-          +assert(!popup.includes('persistentHostAccess }, source'), 'permission result must not be persisted into sync page payload');
-          +assert(options.includes('clearAppSecret'), 'user must be able to explicitly clear the secret');
-          +assert(probe.includes('safeResourceUrl'), 'resource timing URLs must be sanitized before crossing extension boundary');
-          +
-           console.log('final privacy / permissions / architecture hardening: PASS');
-          PATCH
-          sed -i 's/^          //' /tmp/final.patch
-          if git apply --check /tmp/final.patch; then
-            git apply /tmp/final.patch
-          else
-            echo 'Patch check failed; aborting rather than applying a partial delta.'
-            exit 1
-          fi
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(p): return Path(p).read_text(encoding='utf-8')
+          def write(p,s): Path(p).write_text(s,encoding='utf-8')
+          def replace_once(p, old, new, required=True):
+              s=read(p)
+              if new in s: return False
+              if old not in s:
+                  if required: raise SystemExit(f'migration anchor missing: {p}')
+                  return False
+              write(p,s.replace(old,new,1)); return True
+
+          # 1) One contract for DOM labels and sensitive URL policy.
+          p='application-contract.js'; s=read(p)
+          if 'const DOM_LABELS = Object.freeze' not in s:
+              anchor="  const STRUCTURED_PATTERNS = Object.freeze({"
+              block="""  const DOM_LABELS = Object.freeze({\n    position: Object.freeze(['岗位名称','职位名称','应聘职位','申请职位','岗位','职位']),\n    location: Object.freeze(['工作地点','工作地','意向地点','意向城市','地点','城市']),\n    applyTime: Object.freeze(['投递时间','申请时间','应聘时间','提交时间']),\n    status: Object.freeze(['当前状态','投递状态','申请状态','应聘状态','状态','进度']),\n    company: Object.freeze(['公司','企业','雇主'])\n  });\n\n  const URL_PATTERNS = Object.freeze({\n    sensitiveQuery: /(token|auth|authorization|sign|signature|nonce|timestamp|session|cookie|secret|ticket|share|code|key|credential|candidateid|userid|user_id|openid|unionid|mobile|phone|email)/i,\n    cacheBuster: /^(?:_|t|ts|timestamp|rnd|random|cacheBust|cb)$/i\n  });\n\n"""
+              if anchor not in s: raise SystemExit('application contract anchor missing')
+              s=s.replace(anchor,block+anchor,1)
+          if '    DOM_LABELS,' not in s:
+              s=s.replace('    FEISHU_FIELDS,\n','    FEISHU_FIELDS,\n    DOM_LABELS,\n    URL_PATTERNS,\n',1)
+          write(p,s)
+
+          # 2) Content DOM field labels consume the same contract.
+          p='content.js'; s=read(p)
+          if 'const DOM_LABELS = ApplicationContract?.DOM_LABELS;' not in s:
+              s=s.replace("  const ApplicationContract = globalThis.OfferTrackApplicationContract;\n", "  const ApplicationContract = globalThis.OfferTrackApplicationContract;\n  const DOM_LABELS = ApplicationContract?.DOM_LABELS;\n  if (!DOM_LABELS) throw new Error('OfferTrack application contract is required');\n",1)
+              s=s.replace("""  const FIELD_LABELS = [\n    '岗位名称','职位名称','应聘职位','申请职位','岗位','职位',\n    '工作地点','工作地','意向地点','意向城市','地点','城市',\n    '投递时间','申请时间','应聘时间','提交时间',\n    '当前状态','投递状态','申请状态','应聘状态','状态','进度',\n    '公司','企业','雇主','招聘类型','项目'\n  ];""", """  const FIELD_LABELS = [\n    ...DOM_LABELS.position,\n    ...DOM_LABELS.location,\n    ...DOM_LABELS.applyTime,\n    ...DOM_LABELS.status,\n    ...DOM_LABELS.company,\n    '招聘类型','项目'\n  ];""",1)
+              pairs={
+                "['岗位名称','职位名称','应聘职位','申请职位','岗位','职位']":'DOM_LABELS.position',
+                "['公司','企业','雇主']":'DOM_LABELS.company',
+                "['工作地点','工作地','意向地点','意向城市','地点','城市']":'DOM_LABELS.location',
+                "['投递时间','申请时间','应聘时间','提交时间']":'DOM_LABELS.applyTime',
+                "['当前状态','投递状态','申请状态','应聘状态','状态','进度']":'DOM_LABELS.status'
+              }
+              for old,new in pairs.items(): s=s.replace(old,new)
+              write(p,s)
+
+          # 3) Safe GET URL policy also consumes the central contract.
+          p='followup-strategy.js'; s=read(p)
+          if 'Contract.URL_PATTERNS.sensitiveQuery' not in s:
+              s=s.replace("""  const matcher = root?.OfferTrackApplicationMatcher\n    || (typeof module !== 'undefined' && module.exports ? require('./application-matcher.js') : null);\n  const api = factory(matcher);""", """  const matcher = root?.OfferTrackApplicationMatcher\n    || (typeof module !== 'undefined' && module.exports ? require('./application-matcher.js') : null);\n  const contract = root?.OfferTrackApplicationContract\n    || (typeof module !== 'undefined' && module.exports ? require('./application-contract.js') : null);\n  const api = factory(matcher, contract);""",1)
+              s=s.replace("function(Matcher) {\n  'use strict';", "function(Matcher, Contract) {\n  'use strict';\n\n  if (!Contract?.URL_PATTERNS) throw new Error('OfferTrack application contract is required');",1)
+              s=s.replace("  const SENSITIVE_QUERY_RE = /(token|auth|authorization|sign|signature|nonce|timestamp|session|cookie|secret|ticket|share|code|key|credential|candidateid|userid|user_id|openid|unionid|mobile|phone|email)/i;\n  const CACHE_BUSTER_RE = /^(?:_|t|ts|timestamp|rnd|random|cacheBust|cb)$/i;", "  const SENSITIVE_QUERY_RE = Contract.URL_PATTERNS.sensitiveQuery;\n  const CACHE_BUSTER_RE = Contract.URL_PATTERNS.cacheBuster;",1)
+              write(p,s)
+
+          # 4) Resource Timing URL is sanitized before leaving the page.
+          p='strategy-probe.js'; s=read(p)
+          if 'function safeResourceUrl' not in s:
+              s=s.replace("  const Contract = globalThis.OfferTrackApplicationContract;\n", "  const Contract = globalThis.OfferTrackApplicationContract;\n  const URL_POLICY = Contract?.URL_PATTERNS;\n",1)
+              anchor='  function collectResources() {'
+              block="""  function safeResourceUrl(value) {\n    if (!URL_POLICY) return '';\n    let u;\n    try { u = new URL(String(value || ''), location.href); } catch { return ''; }\n    if (u.protocol !== 'https:' || u.origin !== location.origin) return '';\n    for (const [key, val] of [...u.searchParams.entries()]) {\n      if (URL_POLICY.sensitiveQuery.test(key) || URL_POLICY.sensitiveQuery.test(val) || String(val).length > 96) return '';\n      if (URL_POLICY.cacheBuster.test(key)) u.searchParams.delete(key);\n    }\n    u.hash = '';\n    return u.toString();\n  }\n\n"""
+              if anchor not in s: raise SystemExit('strategy probe anchor missing')
+              s=s.replace(anchor,block+anchor,1)
+              old="""      let u;\n      try { u=new URL(raw,location.href); } catch { continue; }\n      if (u.protocol!=='https:' || u.origin!==location.origin) continue;\n      const key=`${u.pathname}${u.search}`;\n      if (!API_HINT_RE.test(key) || API_BAD_RE.test(key)) continue;\n      seen.add(raw);\n      out.push({ url:u.toString(), initiatorType:String(e?.initiatorType||''), duration:Number(e?.duration||0) });"""
+              new="""      const safeUrl = safeResourceUrl(raw);\n      if (!safeUrl) continue;\n      const u = new URL(safeUrl);\n      const key=`${u.pathname}${u.search}`;\n      if (!API_HINT_RE.test(key) || API_BAD_RE.test(key)) continue;\n      seen.add(raw);\n      out.push({ url:safeUrl, initiatorType:String(e?.initiatorType||''), duration:Number(e?.duration||0) });"""
+              if old not in s: raise SystemExit('resource timing anchor missing')
+              write(p,s.replace(old,new,1))
+
+          # 5) Permission result is not persisted in page/sync payload; remove dead popup row.
+          p='popup.js'; s=read(p)
+          if 'persistentHostAccess' in s:
+              old="""    const tab = await activeTab();\n    let persistentHostAccess = false;\n    if (tab?.url && /^https:/i.test(tab.url)) {\n      persistentHostAccess = await HostAccess?.request?.(tab.url).catch(() => false) || false;\n    }\n    const res = await chrome.runtime.sendMessage({\n      type: 'SYNC_RECORDS', records: currentRecords, page: { ...currentPage, persistentHostAccess }, source: 'manual'\n    });"""
+              new="""    const permissionUrl = /^https:/i.test(String(currentPage?.url || '')) ? currentPage.url : '';\n    if (permissionUrl) await HostAccess?.request?.(permissionUrl).catch(() => false);\n    const res = await chrome.runtime.sendMessage({\n      type: 'SYNC_RECORDS', records: currentRecords, page: currentPage, source: 'manual'\n    });"""
+              if old not in s: raise SystemExit('popup permission anchor missing')
+              write(p,s.replace(old,new,1))
+          p='popup.html'; s=read(p)
+          s=s.replace('      <small id="sessionMeta" class="session-meta">会话状态读取中…</small>\n','')
+          write(p,s)
+
+          # 6) Explicit secret clearing; no plaintext refill.
+          p='options.js'; s=read(p)
+          if 'function clearAppSecret' not in s:
+              s=s.replace("  $('save').onclick = save;\n", "  $('save').onclick = save;\n  $('clearAppSecret').onclick = clearAppSecret;\n",1)
+              anchor='async function parseUrl() {'
+              block="""async function clearAppSecret() {\n  await Credentials?.clear?.();\n  $('appSecret').value = '';\n  $('rememberAppSecret').checked = false;\n  $('appSecret').placeholder = '默认仅本次浏览器会话保存';\n  setStatus('✓ App Secret 已从浏览器会话和本机持久化存储中清除');\n}\n\n"""
+              if anchor not in s: raise SystemExit('options secret anchor missing')
+              write(p,s.replace(anchor,block+anchor,1))
+          p='options.html'; s=read(p)
+          if 'id="clearAppSecret"' not in s:
+              old='<p class="hint">App Secret 默认保存在浏览器会话内存中，浏览器重启后需重新输入；开启“记住”后才会写入本机扩展私有存储。无论哪种方式都不会发送到招聘网站、飞书表格或日志。</p>'
+              new='<div class="buttons"><button id="clearAppSecret" class="danger">清除已保存密钥</button></div>\n      <p class="hint">App Secret 默认保存在浏览器会话内存中，浏览器重启后需重新输入；开启“记住”后才会写入本机扩展私有存储。设置对象本身永远不包含 App Secret，也不会把密钥回填到页面、飞书表格或日志。</p>'
+              if old not in s: raise SystemExit('options html secret anchor missing')
+              write(p,s.replace(old,new,1))
+
+          # 7) Docs only describe the final behavior.
+          p='README.md'; s=read(p)
+          s=s.replace('普通 `settings` 对象不再保存 App Secret。','普通 `settings` 对象不再保存 App Secret，设置页不会回填明文，并可随时用“清除已保存密钥”同时删除会话与本机副本。',1)
+          s=s.replace('这些情况下只更新检查相关字段或等待用户处理.','这些情况下不会为了记录诊断而写入飞书业务表；Session / Journal / 运行摘要会保留必要的非敏感诊断信息，并在需要时等待用户处理。',1)
+          s=s.replace('这些情况下只更新检查相关字段或等待用户处理。','这些情况下不会为了记录诊断而写入飞书业务表；Session / Journal / 运行摘要会保留必要的非敏感诊断信息，并在需要时等待用户处理。',1)
+          write(p,s)
+          p='QUICK_START.txt'; s=read(p)
+          old='8. App Secret 默认仅保留在当前浏览器会话；需要浏览器重启后仍自动跟进时，再勾选“在本机记住 App Secret”。'
+          new=old+'设置页不会回填明文，需要时可直接点击“清除已保存密钥”。'
+          if old in s and new not in s: s=s.replace(old,new,1)
+          write(p,s)
+          p='CHANGELOG.md'; s=read(p)
+          if '显式“清除已保存密钥”' not in s:
+              s=s.replace('- App Secret 从普通 `settings` 中移除，默认只放在 `chrome.storage.session`；只有用户显式勾选“在本机记住”才写入独立的可信扩展本地凭据区。旧 `settings.appSecret` 更新后只迁移到当前会话并从普通设置删除。\n', '- App Secret 从普通 `settings` 中移除，默认只放在 `chrome.storage.session`；只有用户显式勾选“在本机记住”才写入独立的可信扩展本地凭据区。旧 `settings.appSecret` 更新后只迁移到当前会话并从普通设置删除。\n- 设置页不再回填 App Secret 明文，并提供显式“清除已保存密钥”；可一次清除会话与本机持久化副本。\n',1)
+          if 'Resource Timing 中发现的 API URL' not in s:
+              s=s.replace('- Structured State 收紧：script JSON 在离开页面前先做安全投影；MAIN-world Store 使用字段/路径联合白名单、敏感 key/container 黑名单和更小预算；泛化 `id/status/name/time` 只有处于招聘申请上下文时才允许保留。\n', '- Structured State 收紧：script JSON 在离开页面前先做安全投影；MAIN-world Store 使用字段/路径联合白名单、敏感 key/container 黑名单和更小预算；泛化 `id/status/name/time` 只有处于招聘申请上下文时才允许保留。\n- 页面字段标签与 Structured State 字段语义进一步集中到 `application-contract.js`；Resource Timing 中发现的 API URL 在离开页面前先拒绝敏感 query，并清理 cache-buster，避免候选 URL 携带账号/签名参数进入后台。\n',1)
+          write(p,s)
+
+          # 8) Add regression assertions without replacing existing stronger tests.
+          p='tests/application-contract.test.js'; s=read(p)
+          marker="assert(Array.isArray(Contract.DOM_LABELS.position)"
+          if marker not in s:
+              block="""assert(Array.isArray(Contract.DOM_LABELS.position) && Contract.DOM_LABELS.position.includes('岗位名称'));\nassert(Contract.URL_PATTERNS.sensitiveQuery.test('candidateId'));\nassert.strictEqual(Contract.fieldKind('id', 'root.user.profile.id'), '', 'generic personal id must be rejected');\n"""
+              s=s.replace("console.log('application contract + safe structured projection: PASS');",block+"\nconsole.log('application contract + safe structured projection: PASS');",1)
+              write(p,s)
+          p='tests/final-hardening.test.js'; s=read(p)
+          if "dead popup session placeholder" not in s:
+              block="""const popupHtml = read('popup.html');\nconst popup = read('popup.js');\nassert(!popupHtml.includes('sessionMeta'), 'dead popup session placeholder must be removed');\nassert(!popup.includes('persistentHostAccess }, source'), 'permission result must not be persisted into sync page payload');\nassert(options.includes('clearAppSecret'), 'user must be able to explicitly clear the secret');\nassert(probe.includes('safeResourceUrl'), 'resource timing URLs must be sanitized before crossing extension boundary');\n"""
+              s=s.replace("console.log('final privacy / permissions / architecture hardening: PASS');",block+"\nconsole.log('final privacy / permissions / architecture hardening: PASS');",1)
+              write(p,s)
+
+          # Fail closed if any target state is missing.
+          checks={
+            'application-contract.js':['DOM_LABELS','URL_PATTERNS'],
+            'content.js':['DOM_LABELS.position','DOM_LABELS.status'],
+            'followup-strategy.js':['Contract.URL_PATTERNS.sensitiveQuery'],
+            'strategy-probe.js':['safeResourceUrl'],
+            'options.js':['clearAppSecret'],
+            'options.html':['id="clearAppSecret"']
+          }
+          for p,needles in checks.items():
+              s=read(p)
+              for n in needles:
+                  if n not in s: raise SystemExit(f'final state missing: {p}: {n}')
+          if 'sessionMeta' in read('popup.html'): raise SystemExit('dead sessionMeta remains')
+          if 'persistentHostAccess }, source' in read('popup.js'): raise SystemExit('permission result still persisted')
+          PY
       - name: Validate complete suite
         run: |
           set -euo pipefail
@@ -332,5 +164,7 @@ jobs:
           git config user.email '140960050+Bruce0153@users.noreply.github.com'
           git add application-contract.js content.js followup-strategy.js strategy-probe.js popup.js popup.html options.js options.html README.md QUICK_START.txt CHANGELOG.md tests/application-contract.test.js tests/final-hardening.test.js
           git diff --cached --check
-          git commit -m 'refactor: finish v2.6.2 hardening'
-          git push origin HEAD:fix/v2.6.2
+          if ! git diff --cached --quiet; then
+            git commit -m 'refactor: finish v2.6.2 hardening'
+            git push origin HEAD:fix/v2.6.2
+          fi

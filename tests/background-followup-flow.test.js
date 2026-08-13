@@ -1,98 +1,10 @@
-const fs = require('fs');
-const vm = require('vm');
-const path = require('path');
-const assert = require('assert');
-
-const fieldNames = ['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态'];
-const records = [
-  { record_id:'jd-r', fields:{
-    '公司':'京东','岗位名称':'算法工程师-AI Infra','当前状态':'筛选中','招聘平台':'campus.jd.com',
-    '岗位链接':'https://campus.jd.com/api/wx/position/index#/myDeliver','唯一记录ID':'jd-uid','原始状态':'筛选中'
-  }},
-  { record_id:'intsig-r', fields:{
-    '公司':'合合信息','岗位名称':'27届校招-大模型算法工程师(J14380)','当前状态':'筛选中','招聘平台':'intsig.zhiye.com',
-    '岗位链接':'https://intsig.zhiye.com/personal/deliveryRecord','唯一记录ID':'intsig-uid','原始状态':'初筛进行中'
-  }}
-];
-
-const store = { settings: {
-  appId:'cli_test', appSecret:'secret', appToken:'app_test', tableId:'tbl_test', baseUrl:'', enabled:true,
-  autoSync:false, customSites:{}, companyAliases:{}, trustedAutoSyncHosts:[],
-  followUpEnabled:true, followUpIntervalHours:6, followUpMode:'open_tabs', followUpMaxSitesPerRun:12,
-  followUpIncludeTerminal:false, followUpNotify:true, followUpTabTimeoutSeconds:25
-}};
-const listeners = {};
-const alarms = new Map();
-const updateBodies = [];
-const event = name => ({ addListener(fn){ (listeners[name] ||= []).push(fn); } });
-
-const chrome = {
-  runtime:{ onInstalled:event('installed'), onStartup:event('startup'), onMessage:event('message'), openOptionsPage:async()=>{} },
-  storage:{ local:{
-    get:async keys => Array.isArray(keys) ? Object.fromEntries(keys.map(k=>[k,store[k]])) : ({[keys]:store[keys]}),
-    set:async obj=>Object.assign(store,obj), setAccessLevel:async()=>{}
-  }, onChanged:event('storageChanged') },
-  alarms:{ onAlarm:event('alarm'), create:async(name,info)=>alarms.set(name,{name,periodInMinutes:info.periodInMinutes,scheduledTime:Date.now()+info.delayInMinutes*60000}), get:async name=>alarms.get(name), clear:async name=>alarms.delete(name) },
-  tabs:{
-    query:async()=>[
-      {id:11,url:'https://campus.jd.com/api/wx/position/index#/myDeliver',active:false,status:'complete'},
-      {id:12,url:'https://intsig.zhiye.com/personal/deliveryRecord',active:false,status:'complete'}
-    ],
-    get:async id=> id===11 ? {id,url:'https://campus.jd.com/api/wx/position/index#/myDeliver',status:'complete'} : {id,url:'https://intsig.zhiye.com/personal/deliveryRecord',status:'complete'},
-    sendMessage:async(id,msg)=>{
-      if(msg.type==='ENHANCE_RECORDS') return {ok:true,records:msg.records};
-      if(msg.type==='PROBE_PAGE') return {ok:true,loginRequired:false};
-      if(msg.type==='SCAN_PAGE'){
-        if(id===11) return {ok:true,detected:true,page:{host:'campus.jd.com'},records:[{
-          company:'京东',position:'算法工程师-AI Infra',status:'笔试/测评',rawStatus:'待测评',platform:'campus.jd.com',url:'https://campus.jd.com/api/wx/position/index#/myDeliver',uid:'new-jd'
-        }]};
-        return {ok:true,detected:true,page:{host:'intsig.zhiye.com'},records:[{
-          company:'合合信息',position:'27届校招-大模型算法工程师(J14380)',status:'面试中',rawStatus:'面试中',platform:'intsig.zhiye.com',url:'https://intsig.zhiye.com/personal/deliveryRecord',uid:'new-int'
-        }]};
-      }
-      return {ok:false};
-    },
-    create:async()=>{throw new Error('open_tabs mode should not create tabs');}, remove:async()=>{}
-  },
-  notifications:{ create:async()=> 'notice-1' }
-};
-
-async function fetchMock(url, options={}){
-  const u=String(url);
-  if(u.includes('/auth/v3/tenant_access_token/internal')) return response({code:0,tenant_access_token:'tenant',expire:7200});
-  if(u.includes('/fields?')) return response({code:0,data:{items:fieldNames.map((name,i)=>({field_name:name,field_id:`f${i}`,type:1,is_primary:i===0})),has_more:false}});
-  if(u.includes('/records?')) return response({code:0,data:{items:records,has_more:false}});
-  if(u.includes('/records/batch_update')){
-    const body=JSON.parse(options.body||'{}'); updateBodies.push(body);
-    return response({code:0,data:{records:body.records||[]}});
-  }
-  throw new Error('unexpected fetch '+u);
-}
-function response(json){ return {ok:true,status:200,statusText:'OK',json:async()=>json}; }
-
-const context={console,chrome,fetch:fetchMock,URL,URLSearchParams,setTimeout,clearTimeout,globalThis:null}; context.globalThis=context;
-context.importScripts=()=>{};
-vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'..','background.js'),'utf8'),context,{filename:'background.js'});
-context.OfferTrackFollowUpCore=require(path.join(__dirname,'..','followup-core.js'));
-context.OfferTrackProviderRegistry=require(path.join(__dirname,'..','provider-registry.js'));
-vm.runInContext(fs.readFileSync(path.join(__dirname,'..','followup-background.js'),'utf8'),context,{filename:'followup-background.js'});
-
-(async()=>{
-  const result=await context.OfferTrackFollowUp._execute('manual');
-  assert.strictEqual(result.checked,2);
-  assert.strictEqual(result.changed,2);
-  assert.strictEqual(result.failed,0);
-  const flattened=updateBodies.flatMap(x=>x.records||[]);
-  const jd=flattened.find(x=>x.record_id==='jd-r');
-  const intsig=flattened.find(x=>x.record_id==='intsig-r');
-  assert(jd && jd.fields['当前状态']==='笔试/测评');
-  assert(intsig && intsig.fields['当前状态']==='面试中');
-  assert(jd.fields['检查状态']==='已检查' && intsig.fields['登录状态']==='可访问');
-  assert.ok(!Object.prototype.hasOwnProperty.call(jd.fields,'招聘系统'),'provider diagnostics must stay out of Feishu');
-  assert.ok(!Object.prototype.hasOwnProperty.call(intsig.fields,'招聘系统'),'provider diagnostics must stay out of Feishu');
-  assert(result.providers.some(x=>x.id==='self_hosted_spa') && result.providers.some(x=>x.id==='beisen_zhiye'));
-  assert(store.lastFollowUp && store.lastFollowUp.changed===2);
-  console.log('OfferTrack end-to-end mocked follow-up flow: PASS');
-  console.log({checked:result.checked,changed:result.changed,updates:flattened.map(x=>({id:x.record_id,status:x.fields['当前状态'],check:x.fields['检查状态']}))});
-})();
+const fs=require('fs'),vm=require('vm'),path=require('path'),assert=require('assert');
+const {fieldNames,installPreBackground,installFollowUpDeps}=require('./runtime-test-helpers.js');
+const records=[{record_id:'jd-r',fields:{'公司':'京东','岗位名称':'算法工程师-AI Infra','当前状态':'筛选中','招聘平台':'campus.jd.com','岗位链接':'https://campus.jd.com/api/wx/position/index#/myDeliver','唯一记录ID':'jd-uid','原始状态':'筛选中'}},{record_id:'intsig-r',fields:{'公司':'合合信息','岗位名称':'27届校招-大模型算法工程师(J14380)','当前状态':'筛选中','招聘平台':'intsig.zhiye.com','岗位链接':'https://intsig.zhiye.com/personal/deliveryRecord','唯一记录ID':'intsig-uid','原始状态':'初筛进行中'}}];
+const store={settings:{appId:'cli_test',appToken:'app_test',tableId:'tbl_test',baseUrl:'',enabled:true,autoSync:false,customSites:{},companyAliases:{},trustedAutoSyncHosts:[],followUpEnabled:true,followUpIntervalHours:6,followUpMode:'open_tabs',followUpMaxSitesPerRun:12,followUpIncludeTerminal:false,followUpNotify:true,followUpTabTimeoutSeconds:25}};
+const listeners={},alarms=new Map(),updateBodies=[];const event=name=>({addListener(fn){(listeners[name] ||= []).push(fn);}});
+const chrome={runtime:{onInstalled:event('installed'),onStartup:event('startup'),onMessage:event('message'),openOptionsPage:async()=>{}},storage:{local:{get:async keys=>Array.isArray(keys)?Object.fromEntries(keys.map(k=>[k,store[k]])):({[keys]:store[keys]}),set:async obj=>Object.assign(store,obj),setAccessLevel:async()=>{}},onChanged:event('storageChanged')},alarms:{onAlarm:event('alarm'),create:async(name,info)=>alarms.set(name,{name,periodInMinutes:info.periodInMinutes,scheduledTime:Date.now()+info.delayInMinutes*60000}),get:async name=>alarms.get(name),clear:async name=>alarms.delete(name)},tabs:{query:async()=>[{id:11,url:'https://campus.jd.com/api/wx/position/index#/myDeliver',active:false,status:'complete'},{id:12,url:'https://intsig.zhiye.com/personal/deliveryRecord',active:false,status:'complete'}],get:async id=>id===11?{id,url:'https://campus.jd.com/api/wx/position/index#/myDeliver',status:'complete'}:{id,url:'https://intsig.zhiye.com/personal/deliveryRecord',status:'complete'},sendMessage:async(id,msg)=>{if(msg.type==='COLLECT_STRATEGY_PROBE')return{ok:true,page:{url:id===11?'https://campus.jd.com/api/wx/position/index#/myDeliver':'https://intsig.zhiye.com/personal/deliveryRecord'},resources:[],jsonSnapshots:[]};if(msg.type==='ENHANCE_RECORDS')return{ok:true,records:msg.records};if(msg.type==='PROBE_PAGE')return{ok:true,loginRequired:false};if(msg.type==='SCAN_PAGE'){if(id===11)return{ok:true,detected:true,page:{host:'campus.jd.com'},records:[{company:'京东',position:'算法工程师-AI Infra',status:'笔试/测评',rawStatus:'待测评',platform:'campus.jd.com',url:'https://campus.jd.com/api/wx/position/index#/myDeliver',uid:'new-jd'}]};return{ok:true,detected:true,page:{host:'intsig.zhiye.com'},records:[{company:'合合信息',position:'27届校招-大模型算法工程师(J14380)',status:'面试中',rawStatus:'面试中',platform:'intsig.zhiye.com',url:'https://intsig.zhiye.com/personal/deliveryRecord',uid:'new-int'}]}}return{ok:false}},create:async()=>{throw new Error('open_tabs mode should not create tabs')},remove:async()=>{}},scripting:{executeScript:async()=>[]},notifications:{create:async()=> 'notice-1'}};
+async function fetchMock(url,options={}){const u=String(url);if(u.includes('/auth/v3/tenant_access_token/internal'))return response({code:0,tenant_access_token:'tenant',expire:7200},u);if(u.includes('/fields?'))return response({code:0,data:{items:fieldNames.map((name,i)=>({field_name:name,field_id:`f${i}`,type:1,is_primary:i===0})),has_more:false}},u);if(u.includes('/records?'))return response({code:0,data:{items:records,has_more:false}},u);if(u.includes('/records/batch_update')){const body=JSON.parse(options.body||'{}');updateBodies.push(body);return response({code:0,data:{records:body.records||[]}},u)}throw new Error('unexpected fetch '+u)}
+function response(json,url=''){const body=JSON.stringify(json);return{ok:true,status:200,statusText:'OK',url,headers:{get:()=> 'application/json'},json:async()=>json,text:async()=>body}}
+const context={console,chrome,fetch:fetchMock,URL,URLSearchParams,AbortController,setTimeout,clearTimeout,globalThis:null};context.globalThis=context;context.importScripts=()=>{};installPreBackground(context);vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'..','background.js'),'utf8'),context,{filename:'background.js'});installFollowUpDeps(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'..','followup-background.js'),'utf8'),context,{filename:'followup-background.js'});
+(async()=>{const result=await context.OfferTrackFollowUp._execute('manual');assert.strictEqual(result.checked,2);assert.strictEqual(result.changed,2);assert.strictEqual(result.failed,0);const flattened=updateBodies.flatMap(x=>x.records||[]);const jd=flattened.find(x=>x.record_id==='jd-r');const intsig=flattened.find(x=>x.record_id==='intsig-r');assert(jd&&jd.fields['当前状态']==='笔试/测评');assert(intsig&&intsig.fields['当前状态']==='面试中');for(const patch of [jd,intsig])for(const diagnostic of ['检查状态','登录状态','招聘系统','检查方式','最后检查时间','状态更新时间'])assert.ok(!Object.prototype.hasOwnProperty.call(patch.fields,diagnostic),`${diagnostic} must stay out of Feishu`);assert(result.providers.some(x=>x.id==='self_hosted_spa')&&result.providers.some(x=>x.id==='beisen_zhiye'));assert(store.lastFollowUp&&store.lastFollowUp.changed===2);console.log('OfferTrack end-to-end mocked follow-up flow: PASS');})();

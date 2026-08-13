@@ -35,6 +35,7 @@ jobs:
           mv tests/v26-lite-runtime.test.js tests/followup-actions.test.js
           python - <<'PY'
           from pathlib import Path
+
           p=Path('tests/followup-actions.test.js')
           s=p.read_text()
           s=s.replace("const lite = read('v26-lite.js');", "const lite = read('followup-actions.js');")
@@ -44,6 +45,21 @@ jobs:
           s=s.replace('v2.6 lite runtime must be loaded', 'follow-up actions runtime must be loaded')
           s=s.replace('lite runtime must wrap completed follow-up runtime', 'actions runtime must load after follow-up runtime')
           s=s.replace("console.log('v2.6.1 lightweight runtime regression: PASS');", "console.log('follow-up actions regression: PASS');")
+          p.write_text(s)
+
+          # API strategy remains internally observable, but diagnostics no longer occupy Feishu columns.
+          p=Path('tests/api-execution-flow.test.js')
+          s=p.read_text()
+          old="const fieldNames=['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','下一步行动','面试时间','优先级','备注','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态','最近错误','招聘系统','检查方式'];"
+          new="const fieldNames=['公司','岗位名称','工作地点','投递时间','当前状态','招聘平台','岗位链接','最近更新时间','唯一记录ID','原始状态','自动跟进','最后检查时间','状态更新时间','检查状态','登录状态'];"
+          if old not in s:
+              raise SystemExit('api test field contract changed unexpectedly')
+          s=s.replace(old,new)
+          old="assert.strictEqual(patched.fields['检查方式'],'API GET');"
+          new="assert.ok(!Object.prototype.hasOwnProperty.call(patched.fields,'检查方式'),'diagnostic strategy must stay out of Feishu');"
+          if old not in s:
+              raise SystemExit('api test strategy assertion changed unexpectedly')
+          s=s.replace(old,new)
           p.write_text(s)
           PY
           cat > tests/runtime-hygiene.test.js <<'NODE'

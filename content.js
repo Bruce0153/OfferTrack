@@ -1,6 +1,8 @@
 (() => {
   const CompanyIdentity = globalThis.OfferTrackCompanyIdentity;
   const ApplicationContract = globalThis.OfferTrackApplicationContract;
+  const DOM_LABELS = ApplicationContract?.DOM_LABELS;
+  if (!DOM_LABELS) throw new Error('OfferTrack application contract is required');
   const APP_PAGE_RE = /(我的投递|投递记录|应聘记录|申请记录|我的申请|应聘进度|求职进度|招聘进度|候选人中心|网申投递|申请进度)/i;
   const APP_URL_RE = /(mydeliver|mydelivery|myapply|my-apply|application|applications|applyrecord|delivery|deliveries|candidate.*(?:apply|deliver)|process|progress|applicationcenter|jobapply)/i;
   const APP_ROUTE_RE = /\/(?:account|personal|candidate|user|profile)\/(?:apply|application|applications|delivery|deliveries|record|records)(?:[/?#]|$)/i;
@@ -36,11 +38,12 @@
   const POSITION_NOISE_RE = /(?:第\s*\d+\s*志愿|第[一二三四五六七八九十]+志愿|官网投递|网申投递|校园投递|社会招聘|校招投递|社招投递|投递渠道|申请渠道)/ig;
   const ANNOUNCEMENT_RE = /(请您|请关注|及时完成|以.*为准|温馨提示|特别提醒|流程升级|面试流程|固定环节|实际邀约|关注邮件|邮件通知|短信通知|设置为|情况为准|公告|通知：|提示：)/i;
   const FIELD_LABELS = [
-    '岗位名称','职位名称','应聘职位','申请职位','岗位','职位',
-    '工作地点','工作地','意向地点','意向城市','地点','城市',
-    '投递时间','申请时间','应聘时间','提交时间',
-    '当前状态','投递状态','申请状态','应聘状态','状态','进度',
-    '公司','企业','雇主','招聘类型','项目'
+    ...DOM_LABELS.position,
+    ...DOM_LABELS.location,
+    ...DOM_LABELS.applyTime,
+    ...DOM_LABELS.status,
+    ...DOM_LABELS.company,
+    '招聘类型','项目'
   ];
 
   let lastRecords = [];
@@ -487,15 +490,15 @@
     const units = collectTextUnits(node);
 
     const positionMeta = inferPosition(node, units);
-    const positionLabeled = labeledValue(node, units, ['岗位名称','职位名称','应聘职位','申请职位','岗位','职位'], 'position');
+    const positionLabeled = labeledValue(node, units, DOM_LABELS.position, 'position');
     let position = positionLabeled || positionMeta.value;
     const positionScore = positionLabeled ? Math.max(positionMeta.score, 11) : positionMeta.score;
 
-    const company = pageCompany || labeledValue(node, units, ['公司','企业','雇主'], 'company') || inferCompany(units);
-    const locationText = labeledValue(node, units, ['工作地点','工作地','意向地点','意向城市','地点','城市'], 'location') || inferLocation(units, raw);
+    const company = pageCompany || labeledValue(node, units, DOM_LABELS.company, 'company') || inferCompany(units);
+    const locationText = labeledValue(node, units, DOM_LABELS.location, 'location') || inferLocation(units, raw);
     position = cleanPositionAgainstLocation(position, locationText);
-    const applyTime = labeledValue(node, units, ['投递时间','申请时间','应聘时间','提交时间'], 'date') || inferDate(units, raw);
-    const rawStatus = labeledValue(node, units, ['当前状态','投递状态','申请状态','应聘状态','状态','进度'], 'status') || inferStatus(node, units);
+    const applyTime = labeledValue(node, units, DOM_LABELS.applyTime, 'date') || inferDate(units, raw);
+    const rawStatus = labeledValue(node, units, DOM_LABELS.status, 'status') || inferStatus(node, units);
     const link = bestLink(node, positionMeta.el, position);
     const sourceId = extractApplicationId(node, link);
     const cardScore = recordContainerScore(node);

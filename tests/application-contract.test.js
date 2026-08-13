@@ -40,4 +40,8 @@ const records = Data.extractRecords([projected], [{ position: '大模型算法�
 assert.strictEqual(records.length, 1);
 assert.strictEqual(records[0].status, '面试中');
 assert.strictEqual(records[0].sourceId, 'a-1');
+assert(Array.isArray(Contract.DOM_LABELS.position) && Contract.DOM_LABELS.position.includes('岗位名称'));
+assert(Contract.URL_PATTERNS.sensitiveQuery.test('candidateId'));
+assert.strictEqual(Contract.fieldKind('id', 'root.user.profile.id'), '', 'generic personal id must be rejected');
+
 console.log('application contract + safe structured projection: PASS');

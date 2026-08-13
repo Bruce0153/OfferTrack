@@ -115,13 +115,10 @@ async function sync() {
   $('sync').textContent = '同步中…';
   setMessage('正在去重并同步到飞书…');
   try {
-    const tab = await activeTab();
-    let persistentHostAccess = false;
-    if (tab?.url && /^https:/i.test(tab.url)) {
-      persistentHostAccess = await HostAccess?.request?.(tab.url).catch(() => false) || false;
-    }
+    const permissionUrl = /^https:/i.test(String(currentPage?.url || '')) ? currentPage.url : '';
+    if (permissionUrl) await HostAccess?.request?.(permissionUrl).catch(() => false);
     const res = await chrome.runtime.sendMessage({
-      type: 'SYNC_RECORDS', records: currentRecords, page: { ...currentPage, persistentHostAccess }, source: 'manual'
+      type: 'SYNC_RECORDS', records: currentRecords, page: currentPage, source: 'manual'
     });
     if (!res?.ok) throw new Error(res?.error || '同步失败');
     $('created').textContent = res.created ?? 0;

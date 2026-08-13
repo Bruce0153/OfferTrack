@@ -26,4 +26,11 @@ const options=read('options.js');
 assert(!/appSecret\s*:/.test(options.match(/function collect\(\)[\s\S]*?\n}\n/)?.[0]||''),'settings collect must not persist App Secret');
 assert(read('credential-store.js').includes("const SESSION_KEY = 'feishuCredential'"));
 assert(!/setInterval\s*\(/.test([...fs.readdirSync('.').filter(x=>x.endsWith('.js'))].map(read).join('\n')));
+const popupHtml = read('popup.html');
+const popup = read('popup.js');
+assert(!popupHtml.includes('sessionMeta'), 'dead popup session placeholder must be removed');
+assert(!popup.includes('persistentHostAccess }, source'), 'permission result must not be persisted into sync page payload');
+assert(options.includes('clearAppSecret'), 'user must be able to explicitly clear the secret');
+assert(probe.includes('safeResourceUrl'), 'resource timing URLs must be sanitized before crossing extension boundary');
+
 console.log('final privacy / permissions / architecture hardening: PASS');

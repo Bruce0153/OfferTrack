@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   settings = stored.settings || { customSites: {}, companyAliases: {}, trustedAutoSyncHosts: [] };
   await fill();
   $('save').onclick = save;
+  $('clearAppSecret').onclick = clearAppSecret;
   $('parseUrl').onclick = parseUrl;
   $('test').onclick = testConnection;
   $('initFields').onclick = initFields;
@@ -91,6 +92,14 @@ async function save() {
   $('saveMsg').textContent = '已保存';
   setTimeout(() => $('saveMsg').textContent = '', 1400);
   await refreshFollowUpSummary();
+}
+
+async function clearAppSecret() {
+  await Credentials?.clear?.();
+  $('appSecret').value = '';
+  $('rememberAppSecret').checked = false;
+  $('appSecret').placeholder = '默认仅本次浏览器会话保存';
+  setStatus('✓ App Secret 已从浏览器会话和本机持久化存储中清除');
 }
 
 async function parseUrl() {

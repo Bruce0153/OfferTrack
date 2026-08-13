@@ -1,16 +1,20 @@
 (function(root, factory) {
   const matcher = root?.OfferTrackApplicationMatcher
     || (typeof module !== 'undefined' && module.exports ? require('./application-matcher.js') : null);
-  const api = factory(matcher);
+  const contract = root?.OfferTrackApplicationContract
+    || (typeof module !== 'undefined' && module.exports ? require('./application-contract.js') : null);
+  const api = factory(matcher, contract);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.OfferTrackFollowUpStrategy = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function(Matcher) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(Matcher, Contract) {
   'use strict';
+
+  if (!Contract?.URL_PATTERNS) throw new Error('OfferTrack application contract is required');
 
   const POSITIVE_API_RE = /(application|apply|delivery|candidate|resume|process|progress|job.*apply|position.*apply|my.*apply|my.*deliver)/i;
   const NEGATIVE_API_RE = /(logout|signout|delete|remove|withdraw|cancel|submit|create|update|modify|save|upload|download|track|analytics|collect|report|log|metric|beacon|captcha|verify|sms|email|sendcode|send-code)/i;
-  const SENSITIVE_QUERY_RE = /(token|auth|authorization|sign|signature|nonce|timestamp|session|cookie|secret|ticket|share|code|key|credential|candidateid|userid|user_id|openid|unionid|mobile|phone|email)/i;
-  const CACHE_BUSTER_RE = /^(?:_|t|ts|timestamp|rnd|random|cacheBust|cb)$/i;
+  const SENSITIVE_QUERY_RE = Contract.URL_PATTERNS.sensitiveQuery;
+  const CACHE_BUSTER_RE = Contract.URL_PATTERNS.cacheBuster;
 
   function safeUrl(input, base='') {
     try { return new URL(String(input || ''), base || undefined); }

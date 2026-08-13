@@ -15,7 +15,8 @@
       <label>App ID<input id="appId" placeholder="cli_xxxxxxxxx" /></label>
       <label>App Secret<input id="appSecret" type="password" placeholder="默认仅本次浏览器会话保存" /></label>
       <label class="check"><input id="rememberAppSecret" type="checkbox" /> 在本机记住 App Secret <span>（仅无人值守自动跟进需要；默认关闭）</span></label>
-      <p class="hint">App Secret 默认保存在浏览器会话内存中，浏览器重启后需重新输入；开启“记住”后才会写入本机扩展私有存储。无论哪种方式都不会发送到招聘网站、飞书表格或日志。</p>
+      <div class="buttons"><button id="clearAppSecret" class="danger">清除已保存密钥</button></div>
+      <p class="hint">App Secret 默认保存在浏览器会话内存中，浏览器重启后需重新输入；开启“记住”后才会写入本机扩展私有存储。设置对象本身永远不包含 App Secret，也不会把密钥回填到页面、飞书表格或日志。</p>
     </section>
 
     <section class="panel">

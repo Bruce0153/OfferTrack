@@ -19,6 +19,19 @@
     autoFollowUp: '自动跟进'
   });
 
+  const DOM_LABELS = Object.freeze({
+    position: Object.freeze(['岗位名称','职位名称','应聘职位','申请职位','岗位','职位']),
+    location: Object.freeze(['工作地点','工作地','意向地点','意向城市','地点','城市']),
+    applyTime: Object.freeze(['投递时间','申请时间','应聘时间','提交时间']),
+    status: Object.freeze(['当前状态','投递状态','申请状态','应聘状态','状态','进度']),
+    company: Object.freeze(['公司','企业','雇主'])
+  });
+
+  const URL_PATTERNS = Object.freeze({
+    sensitiveQuery: /(token|auth|authorization|sign|signature|nonce|timestamp|session|cookie|secret|ticket|share|code|key|credential|candidateid|userid|user_id|openid|unionid|mobile|phone|email)/i,
+    cacheBuster: /^(?:_|t|ts|timestamp|rnd|random|cacheBust|cb)$/i
+  });
+
   const STRUCTURED_PATTERNS = Object.freeze({
     positionKey: /^(?:(?:position|job|post|vacancy|role|recruitPosition|recruitJob)[A-Za-z0-9_-]*(?:name|title)|positionName|positionTitle|jobName|jobTitle|postName|postTitle|roleName|vacancyName|职位名称|岗位名称|应聘职位|申请职位)$/i,
     positionContainerKey: /^(?:position|job|post|vacancy|role)$/i,
@@ -138,6 +151,8 @@
 
   return {
     FEISHU_FIELDS,
+    DOM_LABELS,
+    URL_PATTERNS,
     STRUCTURED_PATTERNS,
     SENSITIVE_KEY_RE,
     SENSITIVE_CONTAINER_RE,

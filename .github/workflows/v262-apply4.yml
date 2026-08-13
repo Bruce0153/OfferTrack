@@ -1,0 +1,48 @@
+name: apply low-risk cleanup final
+
+on:
+  push:
+    branches:
+      - fix/v2.6.2
+    paths:
+      - '.github/workflows/v262-apply4.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v2.6.2
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply verified source and test alignment
+        run: |
+          set -euo pipefail
+          cat .sync/v262-part0.txt .sync/v262-part1.txt | base64 -d > /tmp/v262.patch.xz
+          echo 'f92ee73aebca324f4b38f437f57acf8c06d4d5bfcc87b4d41ba25a5df2344d5e  /tmp/v262.patch.xz' | sha256sum -c -
+          xz -dc /tmp/v262.patch.xz > /tmp/v262.patch
+          git apply --check /tmp/v262.patch
+          git apply /tmp/v262.patch
+          python .sync/v262-align-tests.py
+          python .sync/v262-preserve-test-hook.py
+      - name: Validate before commit
+        run: |
+          set -euo pipefail
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+      - name: Commit clean source and tests
+        run: |
+          set -euo pipefail
+          rm -rf .sync
+          git config user.name 'Zeng, Hualong'
+          git config user.email '140960050+Bruce0153@users.noreply.github.com'
+          git add -A
+          git commit -m 'refactor(v2.6.2): simplify fields and remove versioned runtime names'
+          git push origin HEAD:fix/v2.6.2

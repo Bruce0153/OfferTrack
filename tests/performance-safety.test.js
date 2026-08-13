@@ -1,26 +1,41 @@
 const fs=require('fs'), path=require('path'), assert=require('assert');
 const root=path.join(__dirname,'..');
-const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
+const read=name=>fs.readFileSync(path.join(root,name),'utf8');
+const manifest=JSON.parse(read('manifest.json'));
 const contentScripts=Array.isArray(manifest.content_scripts)?manifest.content_scripts:[];
 const scripts=contentScripts.flatMap(x=>x.js||[]);
 assert(!contentScripts.some(x=>(x.matches||[]).includes('https://*/*')), 'global HTTPS content-script injection is forbidden');
 assert(!scripts.includes('content-ui.js'));
 assert(!fs.existsSync(path.join(root,'content-ui.js')));
-const content=fs.readFileSync(path.join(root,'content.js'),'utf8');
+
+const content=read('content.js');
 assert(!/characterData\s*:\s*true/.test(content));
 assert(/AUTO_SCAN_MIN_GAP\s*=\s*4000/.test(content));
 assert(/isOfferTrackNode/.test(content));
-const semantic=fs.readFileSync(path.join(root,'semantic.js'),'utf8');
+
+const semantic=read('semantic.js');
 assert(!/chrome\.runtime\.sendMessage\s*=/.test(semantic));
 assert(!/setInterval\s*\(/.test(semantic));
 assert(/MAX_SCRIPT_CHARS\s*=\s*900_000/.test(semantic));
-const probe=fs.readFileSync(path.join(root,'strategy-probe.js'),'utf8');
+
+const probe=read('strategy-probe.js');
 assert(/budget=450_000/.test(probe));
-const bg=fs.readFileSync(path.join(root,'followup-background.js'),'utf8');
-assert(/nodes\+\+ > 900/.test(bg), 'v2.6.1 safe MAIN-world projection must keep the stricter 900-node budget');
-assert(/SAFE_LEAF_RE/.test(bg), 'safe Structured State allowlist missing');
-assert(/SENSITIVE_KEY_RE/.test(bg), 'sensitive Structured State key filter missing');
-assert(/main-world-safe/.test(bg), 'safe MAIN-world evidence label missing');
+assert(/projectStructured/.test(probe), 'script JSON must be safely projected before leaving the page');
+
+const contract=read('application-contract.js');
+assert(/SENSITIVE_KEY_RE/.test(contract), 'central structured sensitive-key guard missing');
+assert(/SENSITIVE_CONTAINER_RE/.test(contract), 'central structured sensitive-container guard missing');
+assert(/projectionPolicy/.test(contract), 'central MAIN-world projection policy missing');
+
+const bg=read('followup-background.js');
+assert(/Contract\.projectionPolicy\(\)/.test(bg), 'MAIN-world collection must consume the central projection policy');
+assert(/nodes\+\+ >= 650/.test(bg), 'final MAIN-world projection must keep the tightened 650-node budget');
+assert(/depth > 6/.test(bg), 'MAIN-world projection depth budget missing');
+assert(/v\.slice\(0, 28\)/.test(bg), 'MAIN-world array budget missing');
+assert(/Object\.keys\(v\)\.slice\(0, 60\)/.test(bg), 'MAIN-world object-key budget missing');
+assert(/val\.slice\(0, 240\)/.test(bg), 'MAIN-world string budget missing');
+assert(/sensitiveContainer/.test(bg) && /sensitiveKey/.test(bg), 'MAIN-world projection must apply centralized sensitive filters');
 assert(!/chrome\.tabs\.query\(\{\}\)/.test(bg), 'unscoped tab query is forbidden');
 assert(!bg.includes("chrome.tabs.query({ url: ['https://*/*'] })"), 'broad all-HTTPS tab query is forbidden');
-console.log('OfferTrack v2.6.1 performance safety guards: PASS');
+
+console.log('OfferTrack final performance/privacy safety guards: PASS');

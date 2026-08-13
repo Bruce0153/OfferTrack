@@ -45,6 +45,9 @@
     return text(v).toLowerCase().replace(/\s+/g, ' ').trim();
   }
 
+  function canonicalStatus(status) {
+    return StatusState?.normalize?.(text(status)) || '';
+  }
 
   function isTerminalStatus(status) {
     return FOLLOWUP_TERMINAL.has(canonicalStatus(status));
@@ -122,7 +125,6 @@
     for (const g of groups) g.url = chooseCheckUrl(g.records);
     return groups.sort((a, b) => a.host.localeCompare(b.host));
   }
-
 
   return {
     FIELDS, FOLLOWUP_TERMINAL, text, hostOf, canonicalUrl, norm, canonicalStatus,

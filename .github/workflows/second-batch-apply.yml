@@ -1,0 +1,160 @@
+name: second low-risk cleanup
+
+on:
+  push:
+    branches:
+      - fix/v2.6.2
+    paths:
+      - '.github/workflows/second-batch-apply.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v2.6.2
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply low-risk normalization cleanup
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f'{label}: expected source not found in {path}')
+              p.write_text(s.replace(old, new, 1))
+
+          # application-data.js: Status State Machine becomes the only normalization implementation.
+          p = Path('application-data.js')
+          s = p.read_text()
+          old = """(function(root, factory) {\n  const api = factory();\n  if (typeof module !== 'undefined' && module.exports) module.exports = api;\n  if (root) root.OfferTrackApplicationData = api;\n})(typeof globalThis !== 'undefined' ? globalThis : this, function() {\n"""
+          new = """(function(root, factory) {\n  const StatusState = root?.OfferTrackStatusStateMachine\n    || (typeof module !== 'undefined' && module.exports ? require('./status-state-machine.js') : null);\n  const api = factory(StatusState);\n  if (typeof module !== 'undefined' && module.exports) module.exports = api;\n  if (root) root.OfferTrackApplicationData = api;\n})(typeof globalThis !== 'undefined' ? globalThis : this, function(StatusState) {\n"""
+          if old not in s: raise SystemExit('application-data wrapper changed unexpectedly')
+          s = s.replace(old, new, 1)
+          s, n = re.subn(r"  const STATUS_VALUE_RE = .*?;\n", "", s, count=1)
+          if n != 1: raise SystemExit('STATUS_VALUE_RE not found exactly once')
+          s, n = re.subn(
+              r"  function normalizeStatus\(raw\) \{\n.*?\n  \}\n\n  function normalizeDate",
+              "  function normalizeStatus(raw) {\n    return StatusState?.normalize?.(text(raw)) || '';\n  }\n\n  function normalizeDate",
+              s, count=1, flags=re.S)
+          if n != 1: raise SystemExit('application-data normalizeStatus block not found exactly once')
+          old_filter = "filter: v => STATUS_VALUE_RE.test(v) || !!normalizeStatus(v)"
+          if old_filter not in s: raise SystemExit('application-data status filter changed unexpectedly')
+          s = s.replace(old_filter, "filter: v => !!normalizeStatus(v)", 1)
+          p.write_text(s)
+
+          # followup-core.js: centralize Feishu read fields and canonical status comparisons.
+          p = Path('followup-core.js')
+          s = p.read_text()
+          old = """(function(root, factory) {\n  const api = factory();\n  if (typeof module !== 'undefined' && module.exports) module.exports = api;\n  if (root) root.OfferTrackFollowUpCore = api;\n})(typeof globalThis !== 'undefined' ? globalThis : this, function() {\n"""
+          new = """(function(root, factory) {\n  const StatusState = root?.OfferTrackStatusStateMachine\n    || (typeof module !== 'undefined' && module.exports ? require('./status-state-machine.js') : null);\n  const api = factory(StatusState);\n  if (typeof module !== 'undefined' && module.exports) module.exports = api;\n  if (root) root.OfferTrackFollowUpCore = api;\n})(typeof globalThis !== 'undefined' ? globalThis : this, function(StatusState) {\n"""
+          if old not in s: raise SystemExit('followup-core wrapper changed unexpectedly')
+          s = s.replace(old, new, 1)
+          old = "  const TERMINAL = new Set(['offer', '已结束', '已撤回']);\n"
+          new = """  const FIELDS = Object.freeze({\n    company: '公司', position: '岗位名称', location: '工作地点', applyTime: '投递时间',\n    status: '当前状态', platform: '招聘平台', url: '岗位链接', uid: '唯一记录ID', rawStatus: '原始状态',\n    autoFollowUp: '自动跟进', lastCheckedAt: '最后检查时间'\n  });\n  const FOLLOWUP_TERMINAL = new Set(['Offer', '已结束', '已撤回']);\n"""
+          if old not in s: raise SystemExit('followup-core terminal constant changed unexpectedly')
+          s = s.replace(old, new, 1)
+          old = """  function isTerminalStatus(status) {\n    return TERMINAL.has(norm(status));\n  }\n"""
+          new = """  function canonicalStatus(status) {\n    return StatusState?.normalize?.(text(status)) || '';\n  }\n\n  function isTerminalStatus(status) {\n    return FOLLOWUP_TERMINAL.has(canonicalStatus(status));\n  }\n"""
+          if old not in s: raise SystemExit('followup-core terminal function changed unexpectedly')
+          s = s.replace(old, new, 1)
+          old = """  function fromFeishu(item) {\n    const f = item?.fields || {};\n    return {\n      recordId: item?.record_id || '',\n      company: text(f['公司']),\n      position: text(f['岗位名称']),\n      location: text(f['工作地点']),\n      applyTime: text(f['投递时间']),\n      status: text(f['当前状态']),\n      platform: text(f['招聘平台']),\n      url: text(f['岗位链接']),\n      uid: text(f['唯一记录ID']),\n      rawStatus: text(f['原始状态']),\n      autoFollowUp: text(f['自动跟进']),\n      lastCheckedAt: text(f['最后检查时间']),\n      host: hostOf(text(f['岗位链接']))\n    };\n  }\n"""
+          new = """  function fromFeishu(item) {\n    const f = item?.fields || {};\n    const value = key => text(f[key]);\n    const url = value(FIELDS.url);\n    return {\n      recordId: item?.record_id || '',\n      company: value(FIELDS.company),\n      position: value(FIELDS.position),\n      location: value(FIELDS.location),\n      applyTime: value(FIELDS.applyTime),\n      status: value(FIELDS.status),\n      platform: value(FIELDS.platform),\n      url,\n      uid: value(FIELDS.uid),\n      rawStatus: value(FIELDS.rawStatus),\n      autoFollowUp: value(FIELDS.autoFollowUp),\n      lastCheckedAt: value(FIELDS.lastCheckedAt),\n      host: hostOf(url)\n    };\n  }\n"""
+          if old not in s: raise SystemExit('followup-core fromFeishu changed unexpectedly')
+          s = s.replace(old, new, 1)
+          old = """  function statusChanged(target, scanned) {\n    if (!scanned) return false;\n    return !!norm(scanned.status) && norm(target.status) !== norm(scanned.status);\n  }\n"""
+          new = """  function statusChanged(target, scanned) {\n    if (!scanned) return false;\n    const from = canonicalStatus(target?.status);\n    const to = canonicalStatus(scanned.status);\n    return !!to && from !== to;\n  }\n"""
+          if old not in s: raise SystemExit('followup-core statusChanged changed unexpectedly')
+          s = s.replace(old, new, 1)
+          old = """  return {\n    text, hostOf, canonicalUrl, norm, normPosition, normCompany,\n    isTerminalStatus, followUpOptOut, fromFeishu, selectTargets,\n    urlScore, chooseCheckUrl, groupTargets, similarity, matchScore,\n    matchScanned, statusChanged\n  };\n"""
+          new = """  return {\n    FIELDS, FOLLOWUP_TERMINAL, text, hostOf, canonicalUrl, norm, normPosition, normCompany, canonicalStatus,\n    isTerminalStatus, followUpOptOut, fromFeishu, selectTargets,\n    urlScore, chooseCheckUrl, groupTargets, similarity, matchScore,\n    matchScanned, statusChanged\n  };\n"""
+          if old not in s: raise SystemExit('followup-core exports changed unexpectedly')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # Service worker dependency order: canonical status must exist before consumers initialize.
+          p = Path('service-worker.js')
+          s = p.read_text()
+          old = """  'background.js',\n  'followup-core.js',\n  'provider-registry.js',\n  'application-data.js',\n  'followup-strategy.js',\n  'session-manager.js',\n  'application-matcher.js',\n  'status-state-machine.js',\n"""
+          new = """  'background.js',\n  'status-state-machine.js',\n  'followup-core.js',\n  'provider-registry.js',\n  'application-data.js',\n  'followup-strategy.js',\n  'session-manager.js',\n  'application-matcher.js',\n"""
+          if old not in s: raise SystemExit('service-worker order changed unexpectedly')
+          p.write_text(s.replace(old, new, 1))
+
+          # Behavioral regression coverage.
+          p = Path('tests/application-data.test.js')
+          s = p.read_text()
+          s = s.replace("const data = require('../application-data.js');\n", "const data = require('../application-data.js');\nconst State = require('../status-state-machine.js');\n", 1)
+          marker = "const noise = data.extractRecords"
+          contract = """for (const raw of ['已投递','待筛选','评估中','待测评','AI面试','offer已发放','流程结束','撤回成功','未知状态']) {\n  assert.strictEqual(data.normalizeStatus(raw), State.normalize(raw), `structured status normalization must follow State Machine: ${raw}`);\n}\n\n"""
+          if marker not in s: raise SystemExit('application-data test marker missing')
+          s = s.replace(marker, contract + marker, 1)
+          p.write_text(s)
+
+          p = Path('tests/followup-core.test.js')
+          s = p.read_text()
+          marker = "assert(core.urlScore('https://app.mokahr.com/x#/candidateHome/applications')"
+          contract = """assert.strictEqual(core.FIELDS.status, '当前状态');\nassert.strictEqual(core.FIELDS.url, '岗位链接');\nassert.strictEqual(core.canonicalStatus('待面试'), '面试中');\nassert.strictEqual(core.statusChanged({status:'面试中'}, {status:'待面试'}), false, 'equivalent raw labels must not create false status changes');\nassert.strictEqual(core.statusChanged({status:'筛选中'}, {status:'面试安排'}), true, 'canonical forward status change must still be detected');\nassert.strictEqual(core.statusChanged({status:'筛选中'}, {status:'未知状态'}), false, 'unknown scanned status must never trigger an update');\n\n"""
+          if marker not in s: raise SystemExit('followup-core test marker missing')
+          s = s.replace(marker, contract + marker, 1)
+          p.write_text(s)
+
+          p = Path('tests/service-worker-imports.test.js')
+          s = p.read_text()
+          old = """const provider = source.indexOf(\"provider-registry.js\");\nconst background = source.indexOf(\"followup-background.js\");\nassert(provider >= 0, 'service worker must load provider-registry.js');\nassert(background >= 0, 'service worker must load followup-background.js');\nassert(provider < background, 'provider registry must load before follow-up background');\n"""
+          new = """const state = source.indexOf(\"status-state-machine.js\");\nconst core = source.indexOf(\"followup-core.js\");\nconst appData = source.indexOf(\"application-data.js\");\nconst provider = source.indexOf(\"provider-registry.js\");\nconst background = source.indexOf(\"followup-background.js\");\nassert(state >= 0 && core >= 0 && appData >= 0, 'status consumers must be loaded');\nassert(state < core && state < appData, 'Status State Machine must load before normalization consumers');\nassert(provider >= 0, 'service worker must load provider-registry.js');\nassert(background >= 0, 'service worker must load followup-background.js');\nassert(provider < background, 'provider registry must load before follow-up background');\n"""
+          if old not in s: raise SystemExit('service-worker-imports test changed unexpectedly')
+          p.write_text(s.replace(old, new, 1))
+
+          # Static architecture contract: no second status-regex truth source in ApplicationData.
+          p = Path('tests/runtime-hygiene.test.js')
+          s = p.read_text()
+          marker = "const semantic = read('semantic.js');\n"
+          insert = "const applicationData = read('application-data.js');\nconst followupCore = read('followup-core.js');\n"
+          if insert not in s:
+              if marker not in s: raise SystemExit('runtime hygiene marker missing')
+              s = s.replace(marker, marker + insert, 1)
+          marker2 = "assert(!background.includes('function normalizeCompanyComparable'));\n"
+          checks = """assert(applicationData.includes('StatusState?.normalize'), 'ApplicationData must delegate status normalization');\nassert(!applicationData.includes('STATUS_VALUE_RE'), 'duplicate structured-status regex must stay removed');\nassert(followupCore.includes('canonicalStatus') && followupCore.includes('FIELDS = Object.freeze'), 'follow-up core must centralize status and field reads');\n"""
+          if checks not in s:
+              if marker2 not in s: raise SystemExit('runtime hygiene assertion marker missing')
+              s = s.replace(marker2, marker2 + checks, 1)
+          p.write_text(s)
+
+          print('second low-risk cleanup applied')
+          PY
+      - name: Validate all regressions
+        run: |
+          set -euo pipefail
+          for f in *.js; do node --check "$f"; done
+          python -m json.tool manifest.json >/dev/null
+          for f in tests/*.test.js; do echo "== $f =="; node "$f"; done
+          node - <<'NODE'
+          const app = require('./application-data.js');
+          const state = require('./status-state-machine.js');
+          const core = require('./followup-core.js');
+          for (const s of ['待测评','待面试','流程结束','撤回成功']) {
+            if (app.normalizeStatus(s) !== state.normalize(s)) throw new Error(`status normalization diverged: ${s}`);
+          }
+          if (core.statusChanged({status:'面试中'}, {status:'待面试'})) throw new Error('canonical-equivalent status produced false change');
+          console.log('second-batch invariants: PASS');
+          NODE
+      - name: Commit verified cleanup
+        run: |
+          set -euo pipefail
+          rm .github/workflows/second-batch-apply.yml
+          git config user.name 'Zeng, Hualong'
+          git config user.email '140960050+Bruce0153@users.noreply.github.com'
+          git add -A
+          git commit -m 'refactor(v2.6.2): centralize status normalization and field reads'
+          git push origin HEAD:fix/v2.6.2

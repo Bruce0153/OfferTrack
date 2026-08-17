@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OfferTrack - 秋招投递助手",
-  "version": "2.6.2",
+  "version": "2.6.3",
   "description": "轻量记录并同步招聘投递；统一字段契约与状态判断，最小化招聘站权限和 Structured State 数据面，保留安全四级自动跟进与人工确认。",
   "permissions": [
     "storage",
@@ -34,7 +34,7 @@
     "128": "icons/icon128.png"
   },
   "options_page": "options.html",
-  "version_name": "2.6.2",
+  "version_name": "2.6.3",
   "optional_host_permissions": [
     "https://*/*"
   ]

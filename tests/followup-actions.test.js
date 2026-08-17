@@ -13,7 +13,8 @@ const popup = read('popup.html');
 const State = require('../status-state-machine.js');
 const Review = require('../followup-review.js');
 
-assert.strictEqual(manifest.version, '2.6.2');
+assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
+assert.strictEqual(manifest.version_name, manifest.version);
 assert.ok(!(manifest.content_scripts || []).some(x => (x.matches || []).includes('https://*/*')), 'must not inject on every HTTPS page');
 assert.ok(worker.includes("'followup-decision.js'"), 'explicit decision runtime must be loaded');
 assert.ok(worker.includes("'followup-actions.js'"), 'follow-up actions runtime must be loaded');

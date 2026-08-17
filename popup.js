@@ -116,7 +116,9 @@ async function sync() {
   setMessage('正在去重并同步到飞书…');
   try {
     const permissionUrl = /^https:/i.test(String(currentPage?.url || '')) ? currentPage.url : '';
-    if (permissionUrl) await HostAccess?.request?.(permissionUrl).catch(() => false);
+    const persistentHostAccess = permissionUrl
+      ? !!(await HostAccess?.request?.(permissionUrl).catch(() => false))
+      : false;
     const res = await chrome.runtime.sendMessage({
       type: 'SYNC_RECORDS', records: currentRecords, page: currentPage, source: 'manual'
     });
